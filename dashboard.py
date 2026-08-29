@@ -4,6 +4,7 @@ import os
 import time
 import joblib
 import pandas as pd
+import pytz
 import requests
 import streamlit as st
 
@@ -11,6 +12,9 @@ import streamlit as st
 st.set_page_config(
     page_title="iFOOX Smartbox Dashboard", page_icon="🍱", layout="wide"
 )
+
+# Set Zona Waktu WIB (Asia/Jakarta)
+wib_tz = pytz.timezone("Asia/Jakarta")
 
 # ⚠️ GANTI DENGAN URL FIREBASE KAMU (TAMBAHKAN /sensor_data.json DI AKHIR)
 FIREBASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebasedatabase.app/sensor_data.json"
@@ -111,28 +115,33 @@ massa_gram = st.sidebar.number_input(
     "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
 )
 
-# INPUT TANGGAL & DROPDOWN JAM (PERSIS SEPERTI TAMPILAN LOKAL KAMU)
-tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=datetime.now().date())
+# Waktu Saat Ini Berdasarkan WIB
+now_wib = datetime.now(wib_tz)
 
-# Membuat daftar jam dropdown interval 15 menit (00:00, 00:15, 00:30, 00:45, dst)
+# INPUT TANGGAL & DROPDOWN JAM (BERBASIS WIB)
+tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=now_wib.date())
+
 list_jam = []
 for h in range(24):
     for m in range(0, 60, 15):
         list_jam.append(f"{h:02d}:{m:02d}")
 
-# Default jam menggunakan jam saat ini yang dibulatkan
-now = datetime.now()
-jam_default = f"{now.hour:02d}:{(now.minute // 15) * 15:02d}"
+jam_default = f"{now_wib.hour:02d}:{(now_wib.minute // 15) * 15:02d}"
 idx_default = list_jam.index(jam_default) if jam_default in list_jam else 0
 
-jam_pilihan_str = st.sidebar.selectbox("Jam Penyimpanan", list_jam, index=idx_default)
+jam_pilihan_str = st.sidebar.selectbox(
+    "Jam Penyimpanan", list_jam, index=idx_default
+)
 
-# Parsing jam pilihan ke datetime
+# Parsing jam pilihan ke datetime ber-timezone WIB
 jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
-waktu_gabung = datetime.combine(tgl_masuk, datetime.now().time().replace(hour=jam_h, minute=jam_m, second=0))
+waktu_gabung_naive = datetime.combine(
+    tgl_masuk, datetime.min.time().replace(hour=jam_h, minute=jam_m)
+)
+waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
 
-# Kalkulasi Durasi Simpan
-selisih = datetime.now() - waktu_gabung
+# Kalkulasi Durasi Simpan Presisi (Sama-sama WIB)
+selisih = now_wib - waktu_gabung_wib
 waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
 st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam**")
 
