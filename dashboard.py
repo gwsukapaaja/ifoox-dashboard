@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 import os
 import time
 import joblib
@@ -19,7 +20,7 @@ try:
     model = joblib.load("model/model_ifoox_rf.pkl")
 except Exception:
     st.error(
-        "❌ Model AI belum ditemukan! Pastikan model_ifoox_rf.pkl ada di folder model/"
+        "❌ Model AI belum ditemukan! Jalankan 'python3 train_model.py' dulu."
     )
 
 # --- INISIALISASI SESSION STATE (Mencegah KeyError) ---
@@ -33,7 +34,7 @@ if "last_max_jam" not in st.session_state:
     st.session_state["last_max_jam"] = 24
 
 
-# Fungsi Membaca Data Real-Time dari Firebase Cloud
+# --- FUNGSI BACA DATA FIREBASE (PENGGANTI FLASK) ---
 def read_sensor_data():
     try:
         response = requests.get(FIREBASE_URL, timeout=3)
@@ -47,6 +48,7 @@ def read_sensor_data():
         "kadar_gas_ppm": 0.0,
         "slope_gas": 0.0,
         "last_update": "Belum ada data",
+        "timestamp_full": "",
     }
 
 
@@ -109,18 +111,22 @@ massa_gram = st.sidebar.number_input(
     "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
 )
 
-if "tgl_masuk" not in st.session_state:
-    st.session_state["tgl_masuk"] = datetime.now().date()
-if "jam_masuk" not in st.session_state:
-    st.session_state["jam_masuk"] = datetime.now().time()
-
-tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", key="tgl_masuk")
-jam_masuk = st.sidebar.time_input("Jam Penyimpanan", key="jam_masuk")
+# Pengaturan Input Tanggal & Jam
+tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=datetime.now().date())
+jam_masuk = st.sidebar.time_input("Jam Penyimpanan", value=datetime.now().time())
 
 waktu_gabung = datetime.combine(tgl_masuk, jam_masuk)
 selisih = datetime.now() - waktu_gabung
-waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
-st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam**")
+
+# Kalkulasi Durasi Simpan
+total_detik = selisih.total_seconds()
+total_menit = max(0, int(total_detik // 60))
+waktu_simpan_jam = max(0, int(round(total_detik / 3600.0)))
+
+if total_menit < 60:
+    st.sidebar.info(f"⏳ Durasi Simpan: **{total_menit} Menit** (~{waktu_simpan_jam} Jam)")
+else:
+    st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam** ({total_menit} Menit)")
 
 # Toggle & Interval Auto Refresh
 st.sidebar.divider()
@@ -130,7 +136,7 @@ refresh_rate = st.sidebar.slider(
 )
 
 # TAMPILAN REAL-TIME METRIC CARDS
-st.subheader("📡 Pemantauan Sensor iFOOX (Firebase Cloud)")
+st.subheader("📡 Pemantauan Sensor iFOOX (Real-Time)")
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
 suhu_val = float(sensor_data.get("suhu_c", 0.0))
@@ -149,7 +155,7 @@ col_s4.metric(
     delta_color="off" if slope_val <= 1.0 else "inverse",
 )
 
-st.caption(f"🔄 Terakhir diperbarui dari ESP32 via Firebase: **{last_up}**")
+st.caption(f"🔄 Terakhir diperbarui dari ESP32: **{last_up}**")
 
 st.divider()
 
@@ -180,9 +186,12 @@ if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
         jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
     )
 
+    # -------------------------------------------------------------
     # LOGIKA PENGUNCI MONOTONIK MUTLAK (Anti-Naik)
+    # -------------------------------------------------------------
     if st.session_state["sudah_dianalisis"]:
         last_sisa = st.session_state.get("last_sisa_jam", sisa_jam)
+        # Jika hasil baru bertambah naik, paksa gunakan sisa_jam terkecil sebelumnya
         if sisa_jam > last_sisa:
             sisa_jam = last_sisa
 
