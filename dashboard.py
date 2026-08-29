@@ -34,7 +34,7 @@ if "last_max_jam" not in st.session_state:
     st.session_state["last_max_jam"] = 24
 
 
-# --- FUNGSI BACA DATA DARI FIREBASE (PENGGANTI FLASK) ---
+# --- FUNGSI BACA DATA FIREBASE (PENGGANTI FLASK LOKAL) ---
 def read_sensor_data():
     try:
         response = requests.get(FIREBASE_URL, timeout=3)
@@ -52,7 +52,7 @@ def read_sensor_data():
     }
 
 
-# Fungsi Hitung Shelf Life (Diperbarui untuk 7 Kategori Makanan)
+# Fungsi Hitung Shelf Life
 def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
     max_life_map = {
         "Nasi & Karbohidrat": 24,
@@ -93,7 +93,7 @@ st.caption(
     "Teknologi Penyimpanan Makanan Berbasis AI & IoT untuk Reduksi Food Waste"
 )
 
-# SIDEBAR: Input User (Daftar 7 Kategori Lengkap)
+# SIDEBAR: Input User
 st.sidebar.header("📝 Input Makanan")
 
 opsi_makanan = [
@@ -111,16 +111,27 @@ massa_gram = st.sidebar.number_input(
     "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
 )
 
-# Kunci Session State Input Waktu Agar Tidak Reset/Stuck Saat Auto-Refresh
-if "input_tgl_masuk" not in st.session_state:
-    st.session_state["input_tgl_masuk"] = datetime.now().date()
-if "input_jam_masuk" not in st.session_state:
-    st.session_state["input_jam_masuk"] = datetime.now().time()
+# INPUT TANGGAL & DROPDOWN JAM (PERSIS SEPERTI TAMPILAN LOKAL KAMU)
+tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=datetime.now().date())
 
-tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", key="input_tgl_masuk")
-jam_masuk = st.sidebar.time_input("Jam Penyimpanan", key="input_jam_masuk")
+# Membuat daftar jam dropdown interval 15 menit (00:00, 00:15, 00:30, 00:45, dst)
+list_jam = []
+for h in range(24):
+    for m in range(0, 60, 15):
+        list_jam.append(f"{h:02d}:{m:02d}")
 
-waktu_gabung = datetime.combine(tgl_masuk, jam_masuk)
+# Default jam menggunakan jam saat ini yang dibulatkan
+now = datetime.now()
+jam_default = f"{now.hour:02d}:{(now.minute // 15) * 15:02d}"
+idx_default = list_jam.index(jam_default) if jam_default in list_jam else 0
+
+jam_pilihan_str = st.sidebar.selectbox("Jam Penyimpanan", list_jam, index=idx_default)
+
+# Parsing jam pilihan ke datetime
+jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
+waktu_gabung = datetime.combine(tgl_masuk, datetime.now().time().replace(hour=jam_h, minute=jam_m, second=0))
+
+# Kalkulasi Durasi Simpan
 selisih = datetime.now() - waktu_gabung
 waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
 st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam**")
@@ -136,11 +147,11 @@ refresh_rate = st.sidebar.slider(
 st.subheader("📡 Pemantauan Sensor iFOOX (Real-Time)")
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
-suhu_val = sensor_data["suhu_c"]
-rh_val = sensor_data["kelembapan_rh"]
-gas_val = sensor_data["kadar_gas_ppm"]
-slope_val = sensor_data.get("slope_gas", 0.0)
-last_up = sensor_data["last_update"]
+suhu_val = float(sensor_data.get("suhu_c", 0.0))
+rh_val = float(sensor_data.get("kelembapan_rh", 0.0))
+gas_val = float(sensor_data.get("kadar_gas_ppm", 0.0))
+slope_val = float(sensor_data.get("slope_gas", 0.0))
+last_up = sensor_data.get("last_update", "Belum ada data")
 
 col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
 col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
@@ -183,16 +194,12 @@ if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
         jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
     )
 
-    # -------------------------------------------------------------
     # LOGIKA PENGUNCI MONOTONIK MUTLAK (Anti-Naik)
-    # -------------------------------------------------------------
     if st.session_state["sudah_dianalisis"]:
         last_sisa = st.session_state.get("last_sisa_jam", sisa_jam)
-        # Jika hasil baru bertambah naik, paksa gunakan sisa_jam terkecil sebelumnya
         if sisa_jam > last_sisa:
             sisa_jam = last_sisa
 
-    # Simpan nilai tervalidasi ke session state
     st.session_state["last_sisa_jam"] = sisa_jam
     st.session_state["last_max_jam"] = max_jam
     st.session_state["last_status"] = status_prediksi
