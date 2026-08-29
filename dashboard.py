@@ -172,7 +172,8 @@ col_s4.metric(
     delta_color="off" if slope_val <= 1.0 else "inverse",
 )
 
-st.caption(f"🔄 Terakhir diperbarui dari ESP32: **{last_up}**")
+jam_sekarang_wib = datetime.now(wib_tz).strftime("%H:%M:%S")
+st.caption(f"🔄 Terakhir diperbarui dari ESP32: **{jam_sekarang_wib} WIB**")
 
 st.divider()
 
