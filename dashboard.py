@@ -34,7 +34,7 @@ if "last_max_jam" not in st.session_state:
     st.session_state["last_max_jam"] = 24
 
 
-# --- FUNGSI BACA DATA FIREBASE (PENGGANTI FLASK) ---
+# --- FUNGSI BACA DATA DARI FIREBASE (PENGGANTI FLASK) ---
 def read_sensor_data():
     try:
         response = requests.get(FIREBASE_URL, timeout=3)
@@ -111,22 +111,19 @@ massa_gram = st.sidebar.number_input(
     "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
 )
 
-# Pengaturan Input Tanggal & Jam
-tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=datetime.now().date())
-jam_masuk = st.sidebar.time_input("Jam Penyimpanan", value=datetime.now().time())
+# Kunci Session State Input Waktu Agar Tidak Reset/Stuck Saat Auto-Refresh
+if "input_tgl_masuk" not in st.session_state:
+    st.session_state["input_tgl_masuk"] = datetime.now().date()
+if "input_jam_masuk" not in st.session_state:
+    st.session_state["input_jam_masuk"] = datetime.now().time()
+
+tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", key="input_tgl_masuk")
+jam_masuk = st.sidebar.time_input("Jam Penyimpanan", key="input_jam_masuk")
 
 waktu_gabung = datetime.combine(tgl_masuk, jam_masuk)
 selisih = datetime.now() - waktu_gabung
-
-# Kalkulasi Durasi Simpan
-total_detik = selisih.total_seconds()
-total_menit = max(0, int(total_detik // 60))
-waktu_simpan_jam = max(0, int(round(total_detik / 3600.0)))
-
-if total_menit < 60:
-    st.sidebar.info(f"⏳ Durasi Simpan: **{total_menit} Menit** (~{waktu_simpan_jam} Jam)")
-else:
-    st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam** ({total_menit} Menit)")
+waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
+st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam**")
 
 # Toggle & Interval Auto Refresh
 st.sidebar.divider()
@@ -139,11 +136,11 @@ refresh_rate = st.sidebar.slider(
 st.subheader("📡 Pemantauan Sensor iFOOX (Real-Time)")
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
-suhu_val = float(sensor_data.get("suhu_c", 0.0))
-rh_val = float(sensor_data.get("kelembapan_rh", 0.0))
-gas_val = float(sensor_data.get("kadar_gas_ppm", 0.0))
-slope_val = float(sensor_data.get("slope_gas", 0.0))
-last_up = sensor_data.get("last_update", "Belum ada data")
+suhu_val = sensor_data["suhu_c"]
+rh_val = sensor_data["kelembapan_rh"]
+gas_val = sensor_data["kadar_gas_ppm"]
+slope_val = sensor_data.get("slope_gas", 0.0)
+last_up = sensor_data["last_update"]
 
 col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
 col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
