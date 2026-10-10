@@ -30,10 +30,14 @@ except Exception:
     )
 
 
-# --- INISIALISASI SESSION STATE PER BOKS ---
+# --- INISIALISASI SESSION STATE INDEPENDEN PER BOKS ---
 def init_box_state(box_id):
     if box_id not in st.session_state:
         st.session_state[box_id] = {
+            "jenis_makanan": "Nasi & Karbohidrat",
+            "massa_gram": 150,
+            "tgl_masuk": datetime.now(wib_tz).date(),
+            "jam_pilihan_str": f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
             "sudah_dianalisis": False,
             "last_status": "Belum Dianalisis",
             "last_sisa_jam": 0,
@@ -59,7 +63,7 @@ def read_sensor_data(box_id):
     }
 
 
-# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW ---
+# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW SIDEBAR ---
 def read_all_boxes():
     url = f"{FIREBASE_BASE_URL}/boxes.json"
     try:
@@ -116,13 +120,16 @@ selected_box = st.sidebar.selectbox(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# Inisialisasi state & baca data sensor boks aktif
-init_box_state(selected_box)
+# Inisialisasi state untuk SEMUA boks agar tidak error di loop sidebar
+for b_id in pilihan_boks:
+    init_box_state(b_id)
+
+box_state = st.session_state[selected_box]
 sensor_data = read_sensor_data(selected_box)
 
 st.sidebar.divider()
 
-# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR
+# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR (SINKRON SAMA RESULT AI)
 st.sidebar.subheader("🌐 Status Ringkas All-Box")
 all_boxes_data = read_all_boxes()
 
@@ -130,15 +137,27 @@ for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
     b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
     b_temp = float(b_data.get("suhu_c", 0.0))
+    b_slope = float(b_data.get("slope_gas", 0.0))
 
     if b_gas == 0.0 and b_temp == 0.0:
         status_ringkas = "⚪ Offline"
-    elif b_gas > 580:
-        status_ringkas = "🔴 Basi / Rawan"
-    elif b_gas > 360:
-        status_ringkas = "🟡 Segera Konsumsi"
     else:
-        status_ringkas = "🟢 Aman"
+        b_st = st.session_state[b_id]
+        if b_st["sudah_dianalisis"]:
+            st_ai = b_st["last_status"]
+            if st_ai == "Aman":
+                status_ringkas = "🟢 Aman"
+            elif st_ai == "Segera konsumsi":
+                status_ringkas = "🟡 Segera Konsumsi"
+            else:
+                status_ringkas = "🔴 Basi / Rawan"
+        else:
+            if b_gas > 500 or b_slope > 2.0:
+                status_ringkas = "🔴 Basi / Rawan"
+            elif b_gas > 250 or b_temp > 32.0 or b_slope > 0.5:
+                status_ringkas = "🟡 Segera Konsumsi"
+            else:
+                status_ringkas = "🟢 Aman"
 
     st.sidebar.metric(
         label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
@@ -194,7 +213,7 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (DIPINDAHKAN KE UTAMA) ---
+# --- 2. INPUT DATA MAKANAN (INDEPENDEN PER BOKS) ---
 st.subheader(
     f"📝 Form Input & Analisis Prediksi AI - **{selected_box.upper()}**"
 )
@@ -212,31 +231,58 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         "Olahan Susu & Santan",
     ]
 
+    # Opsi Makanan & Massa (Diikat per boks dengan `key`)
     with col_f1:
-        jenis_makanan = st.selectbox("Jenis Makanan", opsi_makanan)
+        idx_makanan = (
+            opsi_makanan.index(box_state["jenis_makanan"])
+            if box_state["jenis_makanan"] in opsi_makanan
+            else 0
+        )
+        jenis_makanan = st.selectbox(
+            "Jenis Makanan",
+            opsi_makanan,
+            index=idx_makanan,
+            key=f"jenis_{selected_box}",
+        )
         massa_gram = st.number_input(
-            "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
+            "Berat Makanan (Gram)",
+            min_value=10,
+            max_value=2000,
+            value=int(box_state["massa_gram"]),
+            key=f"massa_{selected_box}",
         )
 
-    # Waktu Saat Ini Berdasarkan WIB
+    # Tanggal & Jam (Diikat per boks dengan `key`)
     now_wib = datetime.now(wib_tz)
-
     with col_f2:
-        tgl_masuk = st.date_input("Tanggal Penyimpanan", value=now_wib.date())
+        tgl_masuk = st.date_input(
+            "Tanggal Penyimpanan",
+            value=box_state["tgl_masuk"],
+            key=f"tgl_{selected_box}",
+        )
 
         list_jam = []
         for h in range(24):
             for m in range(0, 60, 15):
                 list_jam.append(f"{h:02d}:{m:02d}")
 
-        jam_default = f"{now_wib.hour:02d}:{(now_wib.minute // 15) * 15:02d}"
+        jam_default = box_state["jam_pilihan_str"]
         idx_default = (
             list_jam.index(jam_default) if jam_default in list_jam else 0
         )
 
         jam_pilihan_str = st.selectbox(
-            "Jam Penyimpanan", list_jam, index=idx_default
+            "Jam Penyimpanan",
+            list_jam,
+            index=idx_default,
+            key=f"jam_{selected_box}",
         )
+
+    # Simpan kembali nilai input form ke session state boks aktif
+    box_state["jenis_makanan"] = jenis_makanan
+    box_state["massa_gram"] = massa_gram
+    box_state["tgl_masuk"] = tgl_masuk
+    box_state["jam_pilihan_str"] = jam_pilihan_str
 
     # Parsing jam pilihan ke datetime ber-timezone WIB
     jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
@@ -277,9 +323,7 @@ if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
         jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
     )
 
-    box_state = st.session_state[selected_box]
-
-    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS (Anti-Naik)
+    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS
     if box_state["sudah_dianalisis"]:
         last_sisa = box_state.get("last_sisa_jam", sisa_jam)
         if sisa_jam > last_sisa:
@@ -291,12 +335,10 @@ if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
     box_state["sudah_dianalisis"] = True
 
 # TAMPILKAN HASIL TERAKHIR UNTUK BOKS AKTIF
-current_box_state = st.session_state[selected_box]
-
-if current_box_state["sudah_dianalisis"]:
-    status_prediksi = current_box_state["last_status"]
-    sisa_jam = current_box_state["last_sisa_jam"]
-    max_jam = current_box_state["last_max_jam"]
+if box_state["sudah_dianalisis"]:
+    status_prediksi = box_state["last_status"]
+    sisa_jam = box_state["last_sisa_jam"]
+    max_jam = box_state["last_max_jam"]
 
     col_r1, col_r2 = st.columns([2, 1])
 
