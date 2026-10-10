@@ -114,15 +114,17 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
 pilihan_boks = ["box_01", "box_02", "box_03"]
-selected_box = st.sidebar.selectbox(
+
+# Inisialisasi state untuk semua boks lebih awal
+for b_id in pilihan_boks:
+    init_box_state(b_id)
+
+# Pemilihan Boks Menggunakan Radio Button (Bukan Dropdown)
+selected_box = st.sidebar.radio(
     "Pilih SmartBox Target:",
     pilihan_boks,
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
-
-# Inisialisasi state untuk SEMUA boks agar tidak error di loop sidebar
-for b_id in pilihan_boks:
-    init_box_state(b_id)
 
 box_state = st.session_state[selected_box]
 sensor_data = read_sensor_data(selected_box)
