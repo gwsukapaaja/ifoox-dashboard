@@ -10,14 +10,16 @@ import streamlit as st
 
 # Setup Halaman Streamlit
 st.set_page_config(
-    page_title="iFOOX Smartbox Dashboard", page_icon="🍱", layout="wide"
+    page_title="iFOOX Smartbox Multi-Device Dashboard",
+    page_icon="🍱",
+    layout="wide",
 )
 
 # Set Zona Waktu WIB (Asia/Jakarta)
 wib_tz = pytz.timezone("Asia/Jakarta")
 
-# ⚠️ GANTI DENGAN URL FIREBASE KAMU (TAMBAHKAN /sensor_data.json DI AKHIR)
-FIREBASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebasedatabase.app/sensor_data.json"
+# BASE URL FIREBASE
+FIREBASE_BASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebasedatabase.app"
 
 # Load Model AI
 try:
@@ -27,21 +29,23 @@ except Exception:
         "❌ Model AI belum ditemukan! Jalankan 'python3 train_model.py' dulu."
     )
 
-# --- INISIALISASI SESSION STATE (Mencegah KeyError) ---
-if "sudah_dianalisis" not in st.session_state:
-    st.session_state["sudah_dianalisis"] = False
-if "last_status" not in st.session_state:
-    st.session_state["last_status"] = "Belum Dianalisis"
-if "last_sisa_jam" not in st.session_state:
-    st.session_state["last_sisa_jam"] = 0
-if "last_max_jam" not in st.session_state:
-    st.session_state["last_max_jam"] = 24
+
+# --- INISIALISASI SESSION STATE PER BOKS (Mencegah Bentrok antar Boks) ---
+def init_box_state(box_id):
+    if box_id not in st.session_state:
+        st.session_state[box_id] = {
+            "sudah_dianalisis": False,
+            "last_status": "Belum Dianalisis",
+            "last_sisa_jam": 0,
+            "last_max_jam": 24,
+        }
 
 
-# --- FUNGSI BACA DATA FIREBASE (PENGGANTI FLASK LOKAL) ---
-def read_sensor_data():
+# --- FUNGSI BACA DATA FIREBASE KHUSUS SATU BOKS ---
+def read_sensor_data(box_id):
+    url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
-        response = requests.get(FIREBASE_URL, timeout=3)
+        response = requests.get(url, timeout=3)
         if response.status_code == 200 and response.json():
             return response.json()
     except Exception:
@@ -52,8 +56,19 @@ def read_sensor_data():
         "kadar_gas_ppm": 0.0,
         "slope_gas": 0.0,
         "last_update": "Belum ada data",
-        "timestamp_full": "",
     }
+
+
+# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW CARDS ---
+def read_all_boxes():
+    url = f"{FIREBASE_BASE_URL}/boxes.json"
+    try:
+        response = requests.get(url, timeout=3)
+        if response.status_code == 200 and response.json():
+            return response.json()
+    except Exception:
+        pass
+    return {}
 
 
 # Fungsi Hitung Shelf Life
@@ -89,16 +104,26 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
     return sisa_jam, max_hours
 
 
-sensor_data = read_sensor_data()
+# --- SIDEBAR: PEMILIHAN DEVICE BOKS ---
+st.sidebar.header("⚙️ Kontrol Perangkat")
 
-# --- TAMPILAN DASHBOARD ---
-st.title("🍱 iFOOX SMARTBOX DASHBOARD")
-st.caption(
-    "Teknologi Penyimpanan Makanan Berbasis AI & IoT untuk Reduksi Food Waste"
+pilihan_boks = ["box_01", "box_02", "box_03"]
+selected_box = st.sidebar.selectbox(
+    "Pilih SmartBox Target:",
+    pilihan_boks,
+    format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
+# Inisialisasi state khusus boks yang dipilih
+init_box_state(selected_box)
+
+# Baca data spesifik boks aktif
+sensor_data = read_sensor_data(selected_box)
+
+st.sidebar.divider()
+
 # SIDEBAR: Input User
-st.sidebar.header("📝 Input Makanan")
+st.sidebar.header(f"📝 Input Makanan ({selected_box.upper()})")
 
 opsi_makanan = [
     "Nasi & Karbohidrat",
@@ -152,15 +177,55 @@ refresh_rate = st.sidebar.slider(
     "Interval Refresh (detik)", min_value=1, max_value=10, value=3
 )
 
-# TAMPILAN REAL-TIME METRIC CARDS
-st.subheader("📡 Pemantauan Sensor iFOOX (Real-Time)")
+
+# --- TAMPILAN DASHBOARD ---
+st.title("🍱 iFOOX SMARTBOX DASHBOARD")
+st.caption(
+    "Teknologi Penyimpanan Makanan Berbasis AI & IoT Multi-Device untuk Reduksi Food Waste"
+)
+
+# --- MULTI-BOX QUICK OVERVIEW CARDS (3 BOKS) ---
+st.markdown("### 🌐 Ringkasan Multi-Device Status")
+all_boxes_data = read_all_boxes()
+col_b1, col_b2, col_b3 = st.columns(3)
+
+for idx, b_id in enumerate(pilihan_boks):
+    b_data = all_boxes_data.get(b_id, {})
+    b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
+    b_temp = float(b_data.get("suhu_c", 0.0))
+
+    # Tentukan status cepat berdasarkan kadar gas
+    if b_gas == 0.0 and b_temp == 0.0:
+        status_ringkas = "⚪ Offline"
+    elif b_gas > 580:
+        status_ringkas = "🔴 Rawan / Basi"
+    elif b_gas > 360:
+        status_ringkas = "🟡 Segera Konsumsi"
+    else:
+        status_ringkas = "🟢 Aman"
+
+    col_target = [col_b1, col_b2, col_b3][idx]
+    with col_target:
+        st.metric(
+            label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
+            value=status_ringkas,
+            delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
+            delta_color="off",
+        )
+
+st.divider()
+
+
+# TAMPILAN REAL-TIME METRIC CARDS BOKS TERPILIH
+st.subheader(
+    f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box.split('_')[1]}**"
+)
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
 suhu_val = float(sensor_data.get("suhu_c", 0.0))
 rh_val = float(sensor_data.get("kelembapan_rh", 0.0))
 gas_val = float(sensor_data.get("kadar_gas_ppm", 0.0))
 slope_val = float(sensor_data.get("slope_gas", 0.0))
-last_up = sensor_data.get("last_update", "Belum ada data")
 
 col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
 col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
@@ -173,12 +238,16 @@ col_s4.metric(
 )
 
 jam_sekarang_wib = datetime.now(wib_tz).strftime("%H:%M:%S")
-st.caption(f"🔄 Terakhir diperbarui dari ESP32: **{jam_sekarang_wib} WIB**")
+st.caption(
+    f"🔄 Terakhir diperbarui dari ESP32 [{selected_box}]: **{jam_sekarang_wib} WIB**"
+)
 
 st.divider()
 
 # ANALISIS SHELF LIFE MANUAL VIA TOMBOL
-st.subheader("🤖 Analisis Prediksi Kelayakan & Shelf Life (AI)")
+st.subheader(
+    f"🤖 Analisis Prediksi Kelayakan & Shelf Life (AI) - {selected_box.upper()}"
+)
 
 if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
     payload_dict = {
@@ -204,22 +273,26 @@ if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
         jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
     )
 
-    # LOGIKA PENGUNCI MONOTONIK MUTLAK (Anti-Naik)
-    if st.session_state["sudah_dianalisis"]:
-        last_sisa = st.session_state.get("last_sisa_jam", sisa_jam)
+    box_state = st.session_state[selected_box]
+
+    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS (Anti-Naik)
+    if box_state["sudah_dianalisis"]:
+        last_sisa = box_state.get("last_sisa_jam", sisa_jam)
         if sisa_jam > last_sisa:
             sisa_jam = last_sisa
 
-    st.session_state["last_sisa_jam"] = sisa_jam
-    st.session_state["last_max_jam"] = max_jam
-    st.session_state["last_status"] = status_prediksi
-    st.session_state["sudah_dianalisis"] = True
+    box_state["last_sisa_jam"] = sisa_jam
+    box_state["last_max_jam"] = max_jam
+    box_state["last_status"] = status_prediksi
+    box_state["sudah_dianalisis"] = True
 
-# TAMPILKAN HASIL TERAKHIR
-if st.session_state["sudah_dianalisis"]:
-    status_prediksi = st.session_state["last_status"]
-    sisa_jam = st.session_state["last_sisa_jam"]
-    max_jam = st.session_state["last_max_jam"]
+# TAMPILKAN HASIL TERAKHIR UNTUK BOKS AKTIF
+current_box_state = st.session_state[selected_box]
+
+if current_box_state["sudah_dianalisis"]:
+    status_prediksi = current_box_state["last_status"]
+    sisa_jam = current_box_state["last_sisa_jam"]
+    max_jam = current_box_state["last_max_jam"]
 
     col_r1, col_r2 = st.columns([2, 1])
 
@@ -257,11 +330,13 @@ if st.session_state["sudah_dianalisis"]:
     if status_prediksi == "Tidak disarankan":
         persentase_sisa = 0.0
 
-    st.write("**Indikator Sisa Umur Simpan Makanan:**")
+    st.write(
+        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
+    )
     st.progress(persentase_sisa)
 else:
     st.info(
-        "💡 Klik tombol **'Hitung Prediksi Shelf Life'** di atas untuk menganalisis sisa waktu simpan makanan secara presisi."
+        f"💡 Klik tombol **'Hitung Prediksi Shelf Life'** di atas untuk menganalisis sisa waktu simpan makanan pada **{selected_box.upper()}**."
     )
 
 # LOOP AUTO RERUN
