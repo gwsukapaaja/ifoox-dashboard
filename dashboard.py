@@ -30,7 +30,7 @@ except Exception:
     )
 
 
-# --- INISIALISASI SESSION STATE PER BOKS (Mencegah Bentrok antar Boks) ---
+# --- INISIALISASI SESSION STATE PER BOKS ---
 def init_box_state(box_id):
     if box_id not in st.session_state:
         st.session_state[box_id] = {
@@ -59,7 +59,7 @@ def read_sensor_data(box_id):
     }
 
 
-# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW CARDS ---
+# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW ---
 def read_all_boxes():
     url = f"{FIREBASE_BASE_URL}/boxes.json"
     try:
@@ -177,46 +177,42 @@ refresh_rate = st.sidebar.slider(
     "Interval Refresh (detik)", min_value=1, max_value=10, value=3
 )
 
-
-# --- TAMPILAN DASHBOARD ---
-st.title("🍱 iFOOX SMARTBOX DASHBOARD")
-st.caption(
-    "Teknologi Penyimpanan Makanan Berbasis AI & IoT Multi-Device untuk Reduksi Food Waste"
-)
-
-# --- MULTI-BOX QUICK OVERVIEW CARDS (3 BOKS) ---
-st.markdown("### 🌐 Ringkasan Multi-Device Status")
+# --- RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR KIRI ---
+st.sidebar.divider()
+st.sidebar.subheader("🌐 Status Ringkas Perangkat")
 all_boxes_data = read_all_boxes()
-col_b1, col_b2, col_b3 = st.columns(3)
 
-for idx, b_id in enumerate(pilihan_boks):
+for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
     b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
     b_temp = float(b_data.get("suhu_c", 0.0))
 
-    # Tentukan status cepat berdasarkan kadar gas
     if b_gas == 0.0 and b_temp == 0.0:
         status_ringkas = "⚪ Offline"
     elif b_gas > 580:
-        status_ringkas = "🔴 Rawan / Basi"
+        status_ringkas = "🔴 Basi / Rawan"
     elif b_gas > 360:
         status_ringkas = "🟡 Segera Konsumsi"
     else:
         status_ringkas = "🟢 Aman"
 
-    col_target = [col_b1, col_b2, col_b3][idx]
-    with col_target:
-        st.metric(
-            label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
-            value=status_ringkas,
-            delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
-            delta_color="off",
-        )
+    st.sidebar.metric(
+        label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
+        value=status_ringkas,
+        delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
+        delta_color="off",
+    )
+
+
+# --- TAMPILAN DASHBOARD UTAMA ---
+st.title("🍱 iFOOX SMARTBOX DASHBOARD")
+st.caption(
+    "Teknologi Penyimpanan Makanan Berbasis AI & IoT Multi-Device untuk Reduksi Food Waste"
+)
 
 st.divider()
 
-
-# TAMPILAN REAL-TIME METRIC CARDS BOKS TERPILIH
+# TAMPILAN REAL-TIME METRIC CARDS BOKS TERPILIH (4 KOLOM PAS)
 st.subheader(
     f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box.split('_')[1]}**"
 )
