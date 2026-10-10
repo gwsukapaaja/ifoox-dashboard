@@ -104,7 +104,9 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
     return sisa_jam, max_hours
 
 
-# --- SIDEBAR: PEMILIHAN DEVICE BOKS ---
+# ==========================================
+# 📌 SIDEBAR: KONTROL PERANGKAT & RINGKASAN ONLY
+# ==========================================
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
 pilihan_boks = ["box_01", "box_02", "box_03"]
@@ -114,72 +116,14 @@ selected_box = st.sidebar.selectbox(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# Inisialisasi state khusus boks yang dipilih
+# Inisialisasi state & baca data sensor boks aktif
 init_box_state(selected_box)
-
-# Baca data spesifik boks aktif
 sensor_data = read_sensor_data(selected_box)
 
 st.sidebar.divider()
 
-# SIDEBAR: Input User
-st.sidebar.header(f"📝 Input Makanan ({selected_box.upper()})")
-
-opsi_makanan = [
-    "Nasi & Karbohidrat",
-    "Lauk Hewani",
-    "Lauk Nabati",
-    "Sayuran Olahan",
-    "Buah Potong",
-    "Kue & Penganan",
-    "Olahan Susu & Santan",
-]
-
-jenis_makanan = st.sidebar.selectbox("Jenis Makanan", opsi_makanan)
-massa_gram = st.sidebar.number_input(
-    "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
-)
-
-# Waktu Saat Ini Berdasarkan WIB
-now_wib = datetime.now(wib_tz)
-
-# INPUT TANGGAL & DROPDOWN JAM (BERBASIS WIB)
-tgl_masuk = st.sidebar.date_input("Tanggal Penyimpanan", value=now_wib.date())
-
-list_jam = []
-for h in range(24):
-    for m in range(0, 60, 15):
-        list_jam.append(f"{h:02d}:{m:02d}")
-
-jam_default = f"{now_wib.hour:02d}:{(now_wib.minute // 15) * 15:02d}"
-idx_default = list_jam.index(jam_default) if jam_default in list_jam else 0
-
-jam_pilihan_str = st.sidebar.selectbox(
-    "Jam Penyimpanan", list_jam, index=idx_default
-)
-
-# Parsing jam pilihan ke datetime ber-timezone WIB
-jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
-waktu_gabung_naive = datetime.combine(
-    tgl_masuk, datetime.min.time().replace(hour=jam_h, minute=jam_m)
-)
-waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
-
-# Kalkulasi Durasi Simpan Presisi (Sama-sama WIB)
-selisih = now_wib - waktu_gabung_wib
-waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
-st.sidebar.info(f"⏳ Durasi Simpan: **{waktu_simpan_jam} Jam**")
-
-# Toggle & Interval Auto Refresh
-st.sidebar.divider()
-auto_refresh = st.sidebar.checkbox("🔄 Auto Refresh (Real-Time)", value=True)
-refresh_rate = st.sidebar.slider(
-    "Interval Refresh (detik)", min_value=1, max_value=10, value=3
-)
-
-# --- RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR KIRI ---
-st.sidebar.divider()
-st.sidebar.subheader("🌐 Status Ringkas Perangkat")
+# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR
+st.sidebar.subheader("🌐 Status Ringkas All-Box")
 all_boxes_data = read_all_boxes()
 
 for b_id in pilihan_boks:
@@ -203,8 +147,18 @@ for b_id in pilihan_boks:
         delta_color="off",
     )
 
+st.sidebar.divider()
 
-# --- TAMPILAN DASHBOARD UTAMA ---
+# TOGGLE AUTO REFRESH
+auto_refresh = st.sidebar.checkbox("🔄 Auto Refresh (Real-Time)", value=True)
+refresh_rate = st.sidebar.slider(
+    "Interval Refresh (detik)", min_value=1, max_value=10, value=3
+)
+
+
+# ==========================================
+# 🍱 MAIN DASHBOARD: MONITORING & INPUT FORM
+# ==========================================
 st.title("🍱 iFOOX SMARTBOX DASHBOARD")
 st.caption(
     "Teknologi Penyimpanan Makanan Berbasis AI & IoT Multi-Device untuk Reduksi Food Waste"
@@ -212,7 +166,7 @@ st.caption(
 
 st.divider()
 
-# TAMPILAN REAL-TIME METRIC CARDS BOKS TERPILIH (4 KOLOM PAS)
+# --- 1. PEMANTAUAN SENSOR REAL-TIME ---
 st.subheader(
     f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box.split('_')[1]}**"
 )
@@ -240,11 +194,65 @@ st.caption(
 
 st.divider()
 
-# ANALISIS SHELF LIFE MANUAL VIA TOMBOL
+# --- 2. INPUT DATA MAKANAN (DIPINDAHKAN KE UTAMA) ---
 st.subheader(
-    f"🤖 Analisis Prediksi Kelayakan & Shelf Life (AI) - {selected_box.upper()}"
+    f"📝 Form Input & Analisis Prediksi AI - **{selected_box.upper()}**"
 )
 
+with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
+    col_f1, col_f2 = st.columns(2)
+
+    opsi_makanan = [
+        "Nasi & Karbohidrat",
+        "Lauk Hewani",
+        "Lauk Nabati",
+        "Sayuran Olahan",
+        "Buah Potong",
+        "Kue & Penganan",
+        "Olahan Susu & Santan",
+    ]
+
+    with col_f1:
+        jenis_makanan = st.selectbox("Jenis Makanan", opsi_makanan)
+        massa_gram = st.number_input(
+            "Berat Makanan (Gram)", min_value=10, max_value=2000, value=150
+        )
+
+    # Waktu Saat Ini Berdasarkan WIB
+    now_wib = datetime.now(wib_tz)
+
+    with col_f2:
+        tgl_masuk = st.date_input("Tanggal Penyimpanan", value=now_wib.date())
+
+        list_jam = []
+        for h in range(24):
+            for m in range(0, 60, 15):
+                list_jam.append(f"{h:02d}:{m:02d}")
+
+        jam_default = f"{now_wib.hour:02d}:{(now_wib.minute // 15) * 15:02d}"
+        idx_default = (
+            list_jam.index(jam_default) if jam_default in list_jam else 0
+        )
+
+        jam_pilihan_str = st.selectbox(
+            "Jam Penyimpanan", list_jam, index=idx_default
+        )
+
+    # Parsing jam pilihan ke datetime ber-timezone WIB
+    jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
+    waktu_gabung_naive = datetime.combine(
+        tgl_masuk, datetime.min.time().replace(hour=jam_h, minute=jam_m)
+    )
+    waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
+
+    # Kalkulasi Durasi Simpan Presisi (Sama-sama WIB)
+    selisih = now_wib - waktu_gabung_wib
+    waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
+    st.info(
+        f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
+    )
+
+# --- 3. TOMBOL & HASIL ANALISIS AI ---
 if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
     payload_dict = {
         "suhu_c": suhu_val,
@@ -332,7 +340,7 @@ if current_box_state["sudah_dianalisis"]:
     st.progress(persentase_sisa)
 else:
     st.info(
-        f"💡 Klik tombol **'Hitung Prediksi Shelf Life'** di atas untuk menganalisis sisa waktu simpan makanan pada **{selected_box.upper()}**."
+        f"💡 Isikan form makanan di atas lalu klik tombol **'Hitung Prediksi Shelf Life'** untuk menganalisis sisa waktu simpan **{selected_box.upper()}**."
     )
 
 # LOOP AUTO RERUN
