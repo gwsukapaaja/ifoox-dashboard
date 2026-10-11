@@ -98,6 +98,15 @@ def add_user_box_id(user_id, new_box_id, auth_token):
         pass
 
 
+def delete_user_box_id(user_id, box_id_to_delete, auth_token):
+    """Menghapus ID boks dari daftar milik user di Firebase."""
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes/{box_id_to_delete}.json?auth={auth_token}"
+    try:
+        requests.delete(url, timeout=3)
+    except Exception:
+        pass
+
+
 # --- FUNGSI BACA BOKS DARI FIREBASE ---
 def read_box_data(user_id, box_id, auth_token):
     data = {}
@@ -185,7 +194,6 @@ saved_refresh_token = cookie_manager.get("ifoox_refresh_token")
 if not st.session_state.authenticated and saved_refresh_token:
     token_data = refresh_token_request(saved_refresh_token)
     if token_data and "id_token" in token_data:
-        # Panggil detail user langsung ke Firebase berdasarkan id_token baru
         user_detail = get_user_details(token_data["id_token"])
         email_found = user_detail.get("email") if user_detail else (cookie_manager.get("ifoox_user_email") or "User")
 
@@ -258,7 +266,7 @@ pilihan_boks = get_user_box_ids(user_id, auth_token)
 if "page" not in st.session_state:
     st.session_state.page = "home"
 if "target_box" not in st.session_state or st.session_state.target_box not in pilihan_boks:
-    st.session_state.target_box = pilihan_boks[0]
+    st.session_state.target_box = pilihan_boks[0] if pilihan_boks else "box_01"
 
 st.markdown("""
 <style>
@@ -392,7 +400,7 @@ if st.sidebar.button("🚪 Logout / Keluar", use_container_width=True):
 
 st.sidebar.divider()
 
-# --- FORM INPUT TAMBAH BOKS BARU DARI USER ---
+# --- FORM INPUT TAMBAH BOKS BARU ---
 st.sidebar.header("➕ Tambah Perangkat Boks")
 new_box_input = st.sidebar.text_input("ID SmartBox Baru (misal: box_02)", key="input_new_box_id")
 if st.sidebar.button("Simpan Boks Baru", use_container_width=True):
@@ -400,6 +408,20 @@ if st.sidebar.button("Simpan Boks Baru", use_container_width=True):
     if clean_box_id:
         add_user_box_id(user_id, clean_box_id, auth_token)
         st.sidebar.success(f"Berhasil menambahkan {clean_box_id}!")
+        st.rerun()
+
+st.sidebar.divider()
+
+# --- FORM HAPUS PERANGKAT BOKS ---
+if pilihan_boks:
+    st.sidebar.header("🗑️ Hapus Perangkat Boks")
+    box_to_delete = st.sidebar.selectbox("Pilih Boks yang Akan Dihapus:", pilihan_boks, key="select_delete_box")
+    if st.sidebar.button("Hapus Boks Ini", use_container_width=True):
+        delete_user_box_id(user_id, box_to_delete, auth_token)
+        st.sidebar.success(f"Boks {box_to_delete} berhasil dihapus!")
+        if st.session_state.target_box == box_to_delete:
+            sisa_box = [b for b in pilihan_boks if b != box_to_delete]
+            st.session_state.target_box = sisa_box[0] if sisa_box else "box_01"
         st.rerun()
 
 st.sidebar.divider()
