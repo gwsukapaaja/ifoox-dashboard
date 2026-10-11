@@ -111,30 +111,17 @@ pilihan_navigasi = [
     "📦 SmartBox #03",
 ]
 
-# Inisialisasi State Halaman Utama
-if "page" not in st.session_state:
-    st.session_state["page"] = pilihan_navigasi[0]
+# FIX PERMANEN NAVIGASI: Set nilai default ke sidebar_radio
+if "sidebar_radio" not in st.session_state:
+    st.session_state["sidebar_radio"] = pilihan_navigasi[0]
 
 st.sidebar.header("⚙️ Navigasi Dashboard")
-
-# Gunakan index acuan langsung dari st.session_state["page"]
-idx_curr = (
-    pilihan_navigasi.index(st.session_state["page"])
-    if st.session_state["page"] in pilihan_navigasi
-    else 0
-)
 
 selected_page = st.sidebar.radio(
     "Pilih Halaman Target:",
     pilihan_navigasi,
-    index=idx_curr,
     key="sidebar_radio",
 )
-
-# Jika pengguna mengklik manual radio di sidebar, perbarui state
-if selected_page != st.session_state["page"]:
-    st.session_state["page"] = selected_page
-    st.rerun()
 
 st.sidebar.divider()
 
@@ -148,7 +135,7 @@ refresh_rate = st.sidebar.slider(
 # ==========================================
 # 🏠 HALAMAN 1: HOMEPAGE (INTERACTIVE CARDS)
 # ==========================================
-if "Homepage" in st.session_state["page"]:
+if "Homepage" in selected_page:
     st.title("🍱 iFOOX SMARTBOX - OVERVIEW DASHBOARD")
     st.caption("Pilih dan pantau seluruh perangkat SmartBox secara terintegrasi dalam satu layar.")
     st.divider()
@@ -254,9 +241,9 @@ if "Homepage" in st.session_state["page"]:
                 unsafe_allow_html=True,
             )
 
-            # Tombol Navigasi Terisolasi di Kolom Card
+            # FIX BUKA BOKS: Mengubah key 'sidebar_radio' secara langsung!
             if st.button(f"🔎 Buka BOX_{b_id.split('_')[1]}", key=f"btn_homepage_{b_id}", type="primary", use_container_width=True):
-                st.session_state["page"] = f"📦 SmartBox #{b_id.split('_')[1]}"
+                st.session_state["sidebar_radio"] = f"📦 SmartBox #{b_id.split('_')[1]}"
                 st.rerun()
 
 
@@ -264,7 +251,7 @@ if "Homepage" in st.session_state["page"]:
 # 📦 HALAMAN 2: DETAIL BOKS (MONITORING & FORM)
 # ==========================================
 else:
-    selected_box = f"box_{st.session_state['page'].split('#')[1]}"
+    selected_box = f"box_{selected_page.split('#')[1]}"
 
     # Baca data boks aktif langsung dari Firebase
     full_box_data = read_box_data(selected_box)
