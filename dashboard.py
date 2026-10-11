@@ -95,7 +95,7 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     return sisa_jam, max_hours
 
 
-# --- SESSION LOGIN ---
+# --- SESSION MANAGEMENT ---
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 if "user_info" not in st.session_state:
@@ -125,7 +125,7 @@ if not st.session_state.authenticated:
     st.stop()
 
 
-# --- INITIALISASI DASHBOARD ---
+# --- INITIALISASI DATA ---
 user_id = st.session_state.user_info["localId"]
 auth_token = st.session_state.user_info["idToken"]
 user_email = st.session_state.user_info["email"]
@@ -134,8 +134,8 @@ pilihan_boks = get_user_box_ids(user_id, auth_token)
 
 if "page" not in st.session_state:
     st.session_state.page = "home"
-if "selected_box" not in st.session_state or st.session_state.selected_box not in pilihan_boks:
-    st.session_state.selected_box = pilihan_boks[0]
+if "target_box" not in st.session_state or st.session_state.target_box not in pilihan_boks:
+    st.session_state.target_box = pilihan_boks[0]
 
 
 # --- SIDEBAR ---
@@ -161,7 +161,14 @@ if st.sidebar.button("← Kembali ke Homepage", use_container_width=True):
     st.session_state.page = "home"
     st.rerun()
 
-selected_box = st.sidebar.radio("Pilih SmartBox Target:", pilihan_boks, index=pilihan_boks.index(st.session_state.selected_box), key="selected_box")
+# AMAN TANPA CRASH DENGAN KEY RADIO INDEPENDEN
+curr_idx = pilihan_boks.index(st.session_state.target_box) if st.session_state.target_box in pilihan_boks else 0
+box_selection = st.sidebar.radio("Pilih SmartBox Target:", pilihan_boks, index=curr_idx)
+if box_selection != st.session_state.target_box:
+    st.session_state.target_box = box_selection
+    st.rerun()
+
+selected_box = st.session_state.target_box
 
 # STATUS RINGKAS SIDEBAR
 st.sidebar.divider()
@@ -185,6 +192,12 @@ for b_id in pilihan_boks:
 
 auto_refresh = st.sidebar.checkbox("🔄 Auto Refresh", value=True)
 refresh_rate = st.sidebar.slider("Interval (detik)", 1, 10, 3)
+
+
+# --- FUNGSI CALLBACK KARTU UNTUK NAVIGASI AMAN ---
+def open_box(b_id):
+    st.session_state.target_box = b_id
+    st.session_state.page = "box"
 
 
 # --- HALAMAN HOMEPAGE ---
@@ -221,9 +234,7 @@ if st.session_state.page == "home":
 
             sisa = b_cfg.get("last_sisa_jam", 0)
             st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
-            if st.button(f"Buka SmartBox #{b_id} →", key=f"open_{b_id}", use_container_width=True):
-                st.session_state.selected_box, st.session_state.page = b_id, "box"
-                st.rerun()
+            st.button(f"Buka SmartBox #{b_id} →", key=f"open_{b_id}", on_click=open_box, args=(b_id,), use_container_width=True)
 
     st.divider()
     st.caption("iFOOX SmartBox • AI & IoT Food Quality Monitoring")
