@@ -27,7 +27,7 @@ try:
 except Exception:
     st.error("❌ Model AI belum ditemukan! Jalankan 'python3 train_model.py' dulu.")
 
-# --- FUNGSI FIREBASE ---
+# --- FUNGSI BACA BOKS DARI FIREBASE ---
 def read_box_data(box_id):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
@@ -55,7 +55,6 @@ def read_all_boxes():
         pass
     return {}
 
-# Fungsi Hitung Shelf Life
 def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     max_life_map = {
         "Nasi & Karbohidrat": 24,
@@ -84,39 +83,25 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
 
 # ==========================================
-# 📌 INITIALIZE SESSION STATE & SIDEBAR
+# 📌 SIDEBAR NAVIGASI UTAMA
 # ==========================================
-if "view_mode" not in st.session_state:
-    st.session_state["view_mode"] = "home"
+pilihan_menu = [
+    "🏠 Overview (Semua Boks)",
+    "📦 SmartBox #01",
+    "📦 SmartBox #02",
+    "📦 SmartBox #03",
+]
 
-# Callback Functions
-def open_box_callback(box_id):
-    st.session_state["sidebar_box_select"] = box_id
-    st.session_state["view_mode"] = "detail"
+# Callback untuk tombol kartu di homepage
+def select_box_from_card(target_menu):
+    st.session_state["main_nav"] = target_menu
 
-def open_detail_from_sidebar():
-    st.session_state["view_mode"] = "detail"
+st.sidebar.header("⚙️ Navigasi Dashboard")
 
-def go_home_callback():
-    st.session_state["view_mode"] = "home"
-
-
-st.sidebar.header("⚙️ Kontrol Perangkat")
-
-pilihan_boks = ["box_01", "box_02", "box_03"]
-
-selected_box_sidebar = st.sidebar.radio(
-    "Pilih SmartBox Target:",
-    pilihan_boks,
-    format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
-    key="sidebar_box_select",
-)
-
-st.sidebar.button(
-    "📊 Buka Detail Boks Pilihan",
-    type="primary",
-    use_container_width=True,
-    on_click=open_detail_from_sidebar,
+menu_aktif = st.sidebar.radio(
+    "Pilih Tampilan:",
+    pilihan_menu,
+    key="main_nav",
 )
 
 st.sidebar.divider()
@@ -128,9 +113,9 @@ refresh_rate = st.sidebar.slider(
 
 
 # ==========================================
-# 🏠 FUNGSI 1: RENDER HOMEPAGE ONLY
+# 🏠 TAMPILAN 1: HOMEPAGE / OVERVIEW ALL
 # ==========================================
-def render_homepage():
+if menu_aktif == "🏠 Overview (Semua Boks)":
     st.title("🍱 iFOOX SMARTBOX - OVERVIEW DASHBOARD")
     st.caption("Pilih dan pantau seluruh perangkat SmartBox secara terintegrasi dalam satu layar.")
     st.divider()
@@ -178,6 +163,7 @@ def render_homepage():
     )
 
     all_boxes = read_all_boxes()
+    pilihan_boks = ["box_01", "box_02", "box_03"]
     cols = st.columns(3)
 
     for idx, b_id in enumerate(pilihan_boks):
@@ -226,27 +212,22 @@ def render_homepage():
                 unsafe_allow_html=True,
             )
 
+            target_menu_name = f"📦 SmartBox #{b_id.split('_')[1]}"
             st.button(
                 f"🔎 Buka BOX_{b_id.split('_')[1]}",
                 key=f"btn_home_{b_id}",
                 type="primary",
                 use_container_width=True,
-                on_click=open_box_callback,
-                args=(b_id,),
+                on_click=select_box_from_card,
+                args=(target_menu_name,),
             )
 
 
 # ==========================================
-# 📦 FUNGSI 2: RENDER DETAIL PAGE ONLY
+# 📦 TAMPILAN 2: DETAIL BOKS (SATU PER SATU)
 # ==========================================
-def render_detail_page():
-    st.button(
-        "🏠 Kembali ke Homepage",
-        key="btn_back_home",
-        on_click=go_home_callback,
-    )
-
-    selected_box = st.session_state["sidebar_box_select"]
+else:
+    selected_box = f"box_{menu_aktif.split('#')[1]}"
 
     full_box_data = read_box_data(selected_box)
     box_config = full_box_data.get("config", {})
@@ -434,14 +415,8 @@ def render_detail_page():
 
 
 # ==========================================
-# 🎯 MAIN ROUTER (DILAKUKAN SECARA EKSKLUSIF)
+# 🔄 LOOP AUTO REFRESH DEDICATED
 # ==========================================
-if st.session_state["view_mode"] == "home":
-    render_homepage()
-else:
-    render_detail_page()
-
-# LOOP AUTO RERUN UNTUK HALAMAN YANG AKTIF
 if auto_refresh:
     time.sleep(refresh_rate)
     st.rerun()
