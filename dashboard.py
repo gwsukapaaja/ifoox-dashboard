@@ -102,10 +102,24 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
 
 # ==========================================
-# 📌 INITIALIZE VIEW STATE & SIDEBAR
+# 📌 INITIALIZE VIEW STATE & CALLBACKS
 # ==========================================
 if "view_mode" not in st.session_state:
     st.session_state["view_mode"] = "home"
+
+# Callback aman untuk membuka boks dari Homepage
+def open_box_callback(box_id):
+    st.session_state["sidebar_box_select"] = box_id
+    st.session_state["view_mode"] = "detail"
+
+# Callback aman untuk tombol di Sidebar
+def open_detail_from_sidebar():
+    st.session_state["view_mode"] = "detail"
+
+# Callback aman untuk kembali ke Homepage
+def go_home_callback():
+    st.session_state["view_mode"] = "home"
+
 
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
@@ -118,10 +132,12 @@ selected_box_sidebar = st.sidebar.radio(
     key="sidebar_box_select",
 )
 
-# Tombol Pindah ke Detail Boks dari Sidebar
-if st.sidebar.button("📊 Buka Detail Boks Pilihan", type="primary", use_container_width=True):
-    st.session_state["view_mode"] = "detail"
-    st.rerun()
+st.sidebar.button(
+    "📊 Buka Detail Boks Pilihan",
+    type="primary",
+    use_container_width=True,
+    on_click=open_detail_from_sidebar,
+)
 
 st.sidebar.divider()
 
@@ -239,29 +255,33 @@ if st.session_state["view_mode"] == "home":
                 unsafe_allow_html=True,
             )
 
-            # Tombol Buka Boks
-            if st.button(f"🔎 Buka BOX_{b_id.split('_')[1]}", key=f"btn_home_{b_id}", type="primary", use_container_width=True):
-                st.session_state["sidebar_box_select"] = b_id
-                st.session_state["view_mode"] = "detail"
-                st.rerun()
+            # Tombol Buka Boks MENGGUNAKAN ON_CLICK CALLBACK AMAN
+            st.button(
+                f"🔎 Buka BOX_{b_id.split('_')[1]}",
+                key=f"btn_home_{b_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=open_box_callback,
+                args=(b_id,),
+            )
 
-    # LOOP AUTO REFRESH KHUSUS HOMEPAGE
+    # Auto Refresh di Homepage
     if auto_refresh:
         time.sleep(refresh_rate)
         st.rerun()
 
-    # KUNCI UTAMA: Hentikan eksekusi script di sini agar halaman detail TIDAK IKUT BOCOR
+    # Mencegah eksekusi lanjut ke halaman detail
     st.stop()
 
 
 # ==========================================
 # 📦 MODE 2: DETAIL BOKS (MONITORING & FORM)
 # ==========================================
-col_back, col_title_space = st.columns([1, 4])
-with col_back:
-    if st.button("🏠 Kembali ke Homepage", key="btn_back_home"):
-        st.session_state["view_mode"] = "home"
-        st.rerun()
+st.button(
+    "🏠 Kembali ke Homepage",
+    key="btn_back_home",
+    on_click=go_home_callback,
+)
 
 selected_box = st.session_state["sidebar_box_select"]
 
@@ -550,7 +570,7 @@ else:
         f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
     )
 
-# LOOP AUTO RERUN DETAIL PAGE
+# Auto Refresh di Detail Page
 if auto_refresh:
     time.sleep(refresh_rate)
     st.rerun()
