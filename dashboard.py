@@ -49,7 +49,7 @@ def save_box_config(box_id, config_dict):
         pass
 
 
-# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW SIDEBAR ---
+# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW ---
 def read_all_boxes():
     url = f"{FIREBASE_BASE_URL}/boxes.json"
     try:
@@ -93,7 +93,6 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
     # --- PENYESUAIAN SINKRONISASI AI ---
     if status_ai == "Segera konsumsi":
-        # Jika AI terdeteksi Segera Konsumsi, batasi sisa jam maksimal 30% dari umur simpan
         sisa_jam = min(sisa_jam, max(1, int(max_hours * 0.3)))
     elif status_ai != "Aman":
         sisa_jam = 0
@@ -102,7 +101,7 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
 
 # ==========================================
-# 🏠 HOMEPAGE: OVERVIEW MULTI-SMARTBOX
+# 🏠 INITIALIZE SESSION STATE & CSS
 # ==========================================
 pilihan_boks = ["box_01", "box_02", "box_03"]
 
@@ -147,6 +146,10 @@ div[data-testid="stButton"] > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
+
+# ==========================================
+# 🏠 MODE 1: HOMEPAGE (OVERVIEW ALL-BOX)
+# ==========================================
 if st.session_state.page == "home":
     all_boxes_data = read_all_boxes()
     st.markdown("# 🍱 iFOOX SMARTBOX")
@@ -173,8 +176,9 @@ if st.session_state.page == "home":
     c1.metric("Total SmartBox", len(pilihan_boks))
     c2.metric("Perangkat Online", sum(1 for s in statuses if s != "Offline"))
     c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
+    
     st.markdown("## Pilih SmartBox")
-    st.caption("Arahkan kursor ke kartu atau tombol untuk melihat efek mengambang, lalu buka perangkat yang ingin dipantau.")
+    st.caption("Klik tombol pada boks yang ingin dipantau.")
 
     cols = st.columns(3, gap="large")
     for i, b_id in enumerate(pilihan_boks):
@@ -201,7 +205,7 @@ if st.session_state.page == "home":
         with cols[i]:
             st.markdown(f"""
             <div class="box-summary">
-              <div class="box-subtitle">IFO OX • MULTI-DEVICE</div>
+              <div class="box-subtitle">iFOOX • MULTI-DEVICE</div>
               <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id[-2:]}</h3>
               <div class="box-status" style="color:{color};">{dot} {status}</div>
               <div class="box-subtitle">🌡️ Suhu <b>{temp:.1f} °C</b> &nbsp; · &nbsp; 💧 RH <b>{rh:.1f}%</b></div>
@@ -215,8 +219,10 @@ if st.session_state.page == "home":
                 progress = max(0.0, min(1.0, float(sisa) / max(1.0, float(maksimum)))) if b_cfg.get("is_saved", False) else 0.0
             except (ValueError, TypeError, ZeroDivisionError):
                 progress = 0.0
+                
             st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
             st.progress(progress)
+            
             if st.button(f"Buka SmartBox #{b_id[-2:]} →", key=f"open_{b_id}", use_container_width=True):
                 st.session_state.selected_box = b_id
                 st.session_state.page = "box"
@@ -240,9 +246,10 @@ selected_box = st.sidebar.radio(
     "Pilih SmartBox Target:",
     pilihan_boks,
     index=pilihan_boks.index(st.session_state.selected_box),
-    key="selected_box",
+    key="selected_box_radio",
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
+st.session_state.selected_box = selected_box
 
 # Baca data boks langsung dari Cloud Firebase Database
 full_box_data = read_box_data(selected_box)
@@ -337,7 +344,7 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (SISTEM PERSISTENCE CLOUD) ---
+# --- 2. INPUT DATA MAKANAN ---
 st.subheader(
     f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
@@ -386,10 +393,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             disabled=is_saved,
         )
 
-        list_jam = []
-        for h in range(24):
-            for m in range(0, 60, 15):
-                list_jam.append(f"{h:02d}:{m:02d}")
+        list_jam = [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 15)]
 
         idx_default = (
             list_jam.index(saved_jam_str) if saved_jam_str in list_jam else 0
@@ -447,107 +451,4 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
 
         selisih = now_wib - waktu_gabung_wib
-        waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
-        st.info(
-            f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
-        )
-
-
-# --- 3. PROSES KALKULASI AI REAL-TIME ---
-if is_saved:
-    payload_dict = {
-        "suhu_c": suhu_val,
-        "kelembapan_rh": rh_val,
-        "massa_gram": saved_massa,
-        "kadar_gas_ppm": gas_val,
-        "waktu_simpan_jam": waktu_simpan_jam,
-    }
-
-    for item in opsi_makanan:
-        col_name = f"jenis_makanan_{item}"
-        payload_dict[col_name] = 1 if saved_jenis == item else 0
-
-    df_input = pd.DataFrame([payload_dict])
-
-    if hasattr(model, "feature_names_in_"):
-        df_input = df_input[model.feature_names_in_]
-
-    status_prediksi = model.predict(df_input)[0]
-
-    # PASSING status_prediksi KE HITUNG SHELF LIFE
-    sisa_jam, max_jam = hitung_shelf_life(
-        saved_jenis,
-        waktu_simpan_jam,
-        suhu_val,
-        gas_val,
-        slope_val,
-        status_ai=status_prediksi,
-    )
-
-    # Logika Monotonik mutlak (sisa jam tidak naik)
-    last_sisa = box_config.get("last_sisa_jam", sisa_jam)
-    if last_sisa > 0 and sisa_jam > last_sisa:
-        sisa_jam = last_sisa
-
-    # Simpan pembaruan status ke Firebase
-    if (
-        box_config.get("last_status") != status_prediksi
-        or box_config.get("last_sisa_jam") != sisa_jam
-    ):
-        box_config["last_status"] = status_prediksi
-        box_config["last_sisa_jam"] = sisa_jam
-        box_config["last_max_jam"] = max_jam
-        save_box_config(selected_box, box_config)
-
-    # --- TAMPILAN HASIL PREDIKSI ---
-    col_r1, col_r2 = st.columns([2, 1])
-
-    with col_r1:
-        if status_prediksi == "Aman":
-            st.success(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi."
-            )
-        elif status_prediksi == "Segera konsumsi":
-            st.warning(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
-            )
-        else:
-            st.error(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
-            )
-
-    with col_r2:
-        if status_prediksi == "Tidak disarankan":
-            st.metric(
-                label="Estimasi Sisa Shelf Life",
-                value="0 Jam",
-                delta="Kedaluwarsa",
-                delta_color="inverse",
-            )
-        else:
-            st.metric(
-                label="Estimasi Sisa Shelf Life",
-                value=f"{sisa_jam} Jam",
-                delta=f"Maks: {max_jam} Jam",
-            )
-
-    persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
-    if status_prediksi == "Tidak disarankan":
-        persentase_sisa = 0.0
-
-    st.write(
-        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
-    )
-    st.progress(persentase_sisa)
-else:
-    st.warning(
-        f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
-    )
-
-# LOOP AUTO RERUN
-if auto_refresh:
-    time.sleep(refresh_rate)
-    st.rerun()
+        waktu_simpan_jam = max(0
