@@ -4,3 +4,4 @@ joblib
 pandas
 scikit-learn
 pytz
+extra-streamlit-components
