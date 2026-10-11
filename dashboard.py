@@ -150,14 +150,12 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
     faktor_gas = 1.8 if gas > 580 else (1.3 if gas > 360 else 1.0)
     faktor_slope = 1.3 if slope > 3.0 else (1.1 if slope > 1.0 else 1.0)
-    faktor_suhu = 1.2 if suhu > 30.0 else 1.0
+    faktor_suhu = 1.3 if suhu > 30.0 else 1.0
 
     jam_terpakai_efektif = durasi_jam * faktor_gas * faktor_suhu * faktor_slope
     sisa_jam = max(0, int(max_hours - jam_terpakai_efektif))
 
-    if status_ai == "Segera konsumsi":
-        sisa_jam = min(sisa_jam, max(1, int(max_hours * 0.3)))
-    elif status_ai != "Aman":
+    if status_ai == "Tidak disarankan":
         sisa_jam = 0
 
     return sisa_jam, max_hours
@@ -270,7 +268,6 @@ def buka_detail_box(box_id_pilihan):
 
 
 # ==========================================
-# ==========================================
 # 🏠 HOMEPAGE: OVERVIEW RINGKAS
 # ==========================================
 if st.session_state.page == "home":
@@ -280,10 +277,8 @@ if st.session_state.page == "home":
     st.divider()
 
     if not pilihan_boks:
-        # --- TAMPILAN JIKA BELUM ADA BOKS (DENGAN TOMBOL BESAR) ---
         st.write("")
         st.write("")
-        
         col_a, col_b, col_c = st.columns([1, 2, 1])
         with col_b:
             st.markdown("""
@@ -294,7 +289,6 @@ if st.session_state.page == "home":
             """, unsafe_allow_html=True)
             st.write("")
             
-            # Form Tambah Boks Langsung di Halaman Utama
             with st.form("form_tambah_box_utama"):
                 st.subheader("➕ Tambah SmartBox Baru")
                 input_box_baru = st.text_input("Masukkan ID SmartBox (misal: box_01, box_02)", placeholder="box_01")
@@ -310,7 +304,6 @@ if st.session_state.page == "home":
                     else:
                         st.warning("Mohon isi ID SmartBox terlebih dahulu.")
     else:
-        # --- TAMPILAN JIKA SUDAH ADA BOKS ---
         statuses = []
         for b_id in pilihan_boks:
             b_data = all_boxes_data.get(b_id, {}) or {}
@@ -336,7 +329,6 @@ if st.session_state.page == "home":
             st.subheader("Daftar SmartBox")
             
         with col_btn_add:
-            # Tombol Tambah Boks Tambahan di Atas Grid
             with st.popover("➕ Tambah Boks Baru", use_container_width=True):
                 st.write("### Tambah SmartBox")
                 input_pop = st.text_input("ID SmartBox", key="pop_input_box")
@@ -380,6 +372,8 @@ if st.session_state.page == "home":
                 st.button(f"Buka Box #{b_id}", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
 
     st.stop()
+
+
 # ==========================================
 # ⚙️ SIDEBAR MANAGEMENT
 # ==========================================
@@ -412,7 +406,6 @@ if pilihan_boks:
 else:
     selected_box = None
 
-# Expander Pengelolaan Perangkat
 with st.sidebar.expander("⚙️ Kelola Perangkat Boks"):
     new_box_input = st.text_input("ID Boks Baru", key="input_new_box_id")
     if st.button("➕ Tambah Boks", use_container_width=True):
@@ -433,7 +426,7 @@ with st.sidebar.expander("⚙️ Kelola Perangkat Boks"):
 
 
 # ==========================================
-# 🍱 MAIN DASHBOARD DETIL BOKS (SIMPLIFIED UI)
+# 🍱 MAIN DASHBOARD DETIL BOKS (REAL-TIME FRAGMENT)
 # ==========================================
 if not selected_box:
     st.warning("⚠️ Belum ada SmartBox yang terdaftar. Tambahkan ID SmartBox pada menu di sidebar.")
@@ -450,12 +443,11 @@ saved_jam_str = box_config.get("jam_pilihan_str", f"{datetime.now(wib_tz).hour:0
 
 st.title(f"📦 SmartBox #{selected_box}")
 
-# Menggunakan TAB agar UI bersih & tidak numpuk
 tab_monitor, tab_config = st.tabs(["📡 Sensor & Status AI", "📝 Konfigurasi Makanan"])
 
 with tab_monitor:
     @st.fragment(run_every="3s")
-    def render_live_sensor():
+    def render_live_sensor_and_ai():
         current_data = read_box_data(user_id, selected_box, auth_token)
         suhu_val = float(current_data.get("suhu_c", 0.0))
         rh_val = float(current_data.get("kelembapan_rh", 0.0))
@@ -468,66 +460,62 @@ with tab_monitor:
         col_s3.metric("Kadar Gas", f"{gas_val:.0f} PPM")
         col_s4.metric("Slope Pembusukan", f"{slope_val:.2f} PPM/m")
         st.caption(f"🔄 Real-time update dari ESP32 [{selected_box}] • {datetime.now(wib_tz).strftime('%H:%M:%S')} WIB")
+        st.divider()
 
-    render_live_sensor()
-    st.divider()
+        if is_saved:
+            now_wib = datetime.now(wib_tz)
+            try:
+                tgl_parsed = datetime.strptime(saved_tgl_str, "%Y-%m-%d").date()
+            except Exception:
+                tgl_parsed = now_wib.date()
 
-    if is_saved:
-        suhu_val = float(full_box_data.get("suhu_c", 0.0))
-        rh_val = float(full_box_data.get("kelembapan_rh", 0.0))
-        gas_val = float(full_box_data.get("kadar_gas_ppm", 0.0))
-        slope_val = float(full_box_data.get("slope_gas", 0.0))
+            jam_h, jam_m = map(int, saved_jam_str.split(":"))
+            waktu_gabung_wib = wib_tz.localize(datetime.combine(tgl_parsed, datetime.min.time().replace(hour=jam_h, minute=jam_m)))
+            
+            waktu_simpan_jam = max(0.0, (now_wib - waktu_gabung_wib).total_seconds() / 3600.0)
 
-        now_wib = datetime.now(wib_tz)
-        try:
-            tgl_parsed = datetime.strptime(saved_tgl_str, "%Y-%m-%d").date()
-        except Exception:
-            tgl_parsed = now_wib.date()
+            opsi_makanan = ["Nasi & Karbohidrat", "Lauk Hewani", "Lauk Nabati", "Sayuran Olahan", "Buah Potong", "Kue & Penganan", "Olahan Susu & Santan"]
+            payload_dict = {
+                "suhu_c": suhu_val,
+                "kelembapan_rh": rh_val,
+                "massa_gram": saved_massa,
+                "kadar_gas_ppm": gas_val,
+                "waktu_simpan_jam": waktu_simpan_jam,
+            }
+            for item in opsi_makanan:
+                payload_dict[f"jenis_makanan_{item}"] = 1 if saved_jenis == item else 0
 
-        jam_h, jam_m = map(int, saved_jam_str.split(":"))
-        waktu_gabung_wib = wib_tz.localize(datetime.combine(tgl_parsed, datetime.min.time().replace(hour=jam_h, minute=jam_m)))
-        waktu_simpan_jam = max(0, int((now_wib - waktu_gabung_wib).total_seconds() // 3600))
+            df_input = pd.DataFrame([payload_dict])
+            if hasattr(model, "feature_names_in_"):
+                df_input = df_input[model.feature_names_in_]
 
-        opsi_makanan = ["Nasi & Karbohidrat", "Lauk Hewani", "Lauk Nabati", "Sayuran Olahan", "Buah Potong", "Kue & Penganan", "Olahan Susu & Santan"]
-        payload_dict = {
-            "suhu_c": suhu_val,
-            "kelembapan_rh": rh_val,
-            "massa_gram": saved_massa,
-            "kadar_gas_ppm": gas_val,
-            "waktu_simpan_jam": waktu_simpan_jam,
-        }
-        for item in opsi_makanan:
-            payload_dict[f"jenis_makanan_{item}"] = 1 if saved_jenis == item else 0
+            status_prediksi = model.predict(df_input)[0]
+            sisa_jam, max_jam = hitung_shelf_life(saved_jenis, waktu_simpan_jam, suhu_val, gas_val, slope_val, status_ai=status_prediksi)
 
-        df_input = pd.DataFrame([payload_dict])
-        if hasattr(model, "feature_names_in_"):
-            df_input = df_input[model.feature_names_in_]
+            if box_config.get("last_status") != status_prediksi or box_config.get("last_sisa_jam") != sisa_jam:
+                box_config["last_status"] = status_prediksi
+                box_config["last_sisa_jam"] = sisa_jam
+                box_config["last_max_jam"] = max_jam
+                save_box_config(user_id, selected_box, box_config, auth_token)
 
-        status_prediksi = model.predict(df_input)[0]
-        sisa_jam, max_jam = hitung_shelf_life(saved_jenis, waktu_simpan_jam, suhu_val, gas_val, slope_val, status_ai=status_prediksi)
+            col_r1, col_r2 = st.columns([2, 1])
+            with col_r1:
+                if status_prediksi == "Aman":
+                    st.success(f"### STATUS: {status_prediksi.upper()}\n🟢 Makanan masih segar dan aman dikonsumsi.")
+                elif status_prediksi == "Segera konsumsi":
+                    st.warning(f"### STATUS: {status_prediksi.upper()}\n⚠️ Kualitas mulai menurun, segera dihabiskan!")
+                else:
+                    st.error(f"### STATUS: {status_prediksi.upper()}\n🚨 Makanan terdeteksi BASI! Jangan dikonsumsi.")
 
-        if box_config.get("last_status") != status_prediksi or box_config.get("last_sisa_jam") != sisa_jam:
-            box_config["last_status"] = status_prediksi
-            box_config["last_sisa_jam"] = sisa_jam
-            box_config["last_max_jam"] = max_jam
-            save_box_config(user_id, selected_box, box_config, auth_token)
+            with col_r2:
+                st.metric("Estimasi Sisa Umur", f"{sisa_jam} Jam", delta=f"Max: {max_jam} Jam")
 
-        col_r1, col_r2 = st.columns([2, 1])
-        with col_r1:
-            if status_prediksi == "Aman":
-                st.success(f"### STATUS: {status_prediksi.upper()}\n🟢 Makanan masih segar dan aman dikonsumsi.")
-            elif status_prediksi == "Segera konsumsi":
-                st.warning(f"### STATUS: {status_prediksi.upper()}\n⚠️ Kualitas mulai menurun, segera dihabiskan!")
-            else:
-                st.error(f"### STATUS: {status_prediksi.upper()}\n🚨 Makanan terdeteksi BASI! Jangan dikonsumsi.")
+            persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam)) if status_prediksi != "Tidak disarankan" else 0.0
+            st.progress(persentase_sisa)
+        else:
+            st.info("💡 **SmartBox ini masih kosong.** Buka tab **📝 Konfigurasi Makanan** untuk mengisi data makanan.")
 
-        with col_r2:
-            st.metric("Estimasi Sisa Umur", f"{sisa_jam} Jam", delta=f"Max: {max_jam} Jam")
-
-        persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam)) if status_prediksi != "Tidak disarankan" else 0.0
-        st.progress(persentase_sisa)
-    else:
-        st.info("💡 **SmartBox ini masih kosong.** Buka tab **📝 Konfigurasi Makanan** untuk mengisi data makanan.")
+    render_live_sensor_and_ai()
 
 with tab_config:
     opsi_makanan = ["Nasi & Karbohidrat", "Lauk Hewani", "Lauk Nabati", "Sayuran Olahan", "Buah Potong", "Kue & Penganan", "Olahan Susu & Santan"]
