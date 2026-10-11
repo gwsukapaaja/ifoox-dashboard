@@ -51,7 +51,7 @@ def save_box_config(box_id, config_dict):
         pass
 
 
-# --- FUNGSI BACA SELURUH BOKS UNTUK HOMEPAGE & SIDEBAR ---
+# --- FUNGSI BACA SELURUH BOKS UNTUK HOMEPAGE ---
 def read_all_boxes():
     url = f"{FIREBASE_BASE_URL}/boxes.json"
     try:
@@ -102,26 +102,27 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
 
 # ==========================================
-# 📌 SIDEBAR: NAVIGASI HOMEPAGE & KONTROL
+# 📌 INITIALIZE VIEW STATE & SIDEBAR
 # ==========================================
-pilihan_navigasi = [
-    "🏠 Homepage (Overview All-Box)",
-    "📦 SmartBox #01",
-    "📦 SmartBox #02",
-    "📦 SmartBox #03",
-]
+# Mode View: 'home' atau 'detail'
+if "view_mode" not in st.session_state:
+    st.session_state["view_mode"] = "home"
 
-# Callback Function untuk mengubah navigasi secara aman
-def switch_page(target_page):
-    st.session_state["sidebar_radio"] = target_page
+st.sidebar.header("⚙️ Kontrol Perangkat")
 
-st.sidebar.header("⚙️ Navigasi Dashboard")
+pilihan_boks = ["box_01", "box_02", "box_03"]
 
-selected_page = st.sidebar.radio(
-    "Pilih Halaman Target:",
-    pilihan_navigasi,
-    key="sidebar_radio",
+selected_box_sidebar = st.sidebar.radio(
+    "Pilih SmartBox Target:",
+    pilihan_boks,
+    format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
+    key="sidebar_box_select",
 )
+
+# Jika pengguna secara manual klik radio di sidebar, pindah ke view 'detail'
+if st.sidebar.button("📊 Buka Detail Boks Pilihan", type="primary", use_container_width=True):
+    st.session_state["view_mode"] = "detail"
+    st.rerun()
 
 st.sidebar.divider()
 
@@ -133,10 +134,9 @@ refresh_rate = st.sidebar.slider(
 
 
 # ==========================================
-# 🏠 HALAMAN 1: HOMEPAGE (INTERACTIVE CARDS)
+# 🏠 MODE 1: HOMEPAGE (OVERVIEW ALL-BOX)
 # ==========================================
-# FIX PENGECEKAN PERSIS
-if selected_page == pilihan_navigasi[0]:
+if st.session_state["view_mode"] == "home":
     st.title("🍱 iFOOX SMARTBOX - OVERVIEW DASHBOARD")
     st.caption("Pilih dan pantau seluruh perangkat SmartBox secara terintegrasi dalam satu layar.")
     st.divider()
@@ -185,8 +185,6 @@ if selected_page == pilihan_navigasi[0]:
     )
 
     all_boxes = read_all_boxes()
-    pilihan_boks = ["box_01", "box_02", "box_03"]
-
     cols = st.columns(3)
 
     for idx, b_id in enumerate(pilihan_boks):
@@ -242,26 +240,27 @@ if selected_page == pilihan_navigasi[0]:
                 unsafe_allow_html=True,
             )
 
-            target_box_name = f"📦 SmartBox #{b_id.split('_')[1]}"
-            st.button(
-                f"🔎 Buka BOX_{b_id.split('_')[1]}",
-                key=f"btn_homepage_{b_id}",
-                type="primary",
-                use_container_width=True,
-                on_click=switch_page,
-                args=(target_box_name,),
-            )
+            # Tombol Buka Boks (Pindah State & Rerun)
+            if st.button(f"🔎 Buka BOX_{b_id.split('_')[1]}", key=f"btn_home_{b_id}", type="primary", use_container_width=True):
+                st.session_state["sidebar_box_select"] = b_id
+                st.session_state["view_mode"] = "detail"
+                st.rerun()
 
 
 # ==========================================
-# 📦 HALAMAN 2: DETAIL BOKS (MONITORING & FORM)
+# 📦 MODE 2: DETAIL BOKS (MONITORING & FORM)
 # ==========================================
 else:
-    # Parsing ID Boks yang dipilih
-    box_num = selected_page.split('#')[1].strip()
-    selected_box = f"box_{box_num}"
+    # Tombol Kembali ke Homepage
+    col_back, col_title_space = st.columns([1, 4])
+    with col_back:
+        if st.button("🏠 Kembali ke Homepage", key="btn_back_home"):
+            st.session_state["view_mode"] = "home"
+            st.rerun()
 
-    # Baca data boks aktif langsung dari Firebase
+    selected_box = st.session_state["sidebar_box_select"]
+
+    # Baca data boks aktif dari Firebase
     full_box_data = read_box_data(selected_box)
     box_config = full_box_data.get("config", {})
 
