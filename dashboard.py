@@ -451,4 +451,107 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
 
         selisih = now_wib - waktu_gabung_wib
-        waktu_simpan_jam = max(0
+        waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
+        st.info(
+            f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
+        )
+
+
+# --- 3. PROSES KALKULASI AI REAL-TIME ---
+if is_saved:
+    payload_dict = {
+        "suhu_c": suhu_val,
+        "kelembapan_rh": rh_val,
+        "massa_gram": saved_massa,
+        "kadar_gas_ppm": gas_val,
+        "waktu_simpan_jam": waktu_simpan_jam,
+    }
+
+    for item in opsi_makanan:
+        col_name = f"jenis_makanan_{item}"
+        payload_dict[col_name] = 1 if saved_jenis == item else 0
+
+    df_input = pd.DataFrame([payload_dict])
+
+    if hasattr(model, "feature_names_in_"):
+        df_input = df_input[model.feature_names_in_]
+
+    status_prediksi = model.predict(df_input)[0]
+
+    # PASSING status_prediksi KE HITUNG SHELF LIFE REAL-TIME
+    sisa_jam_hitung, max_jam = hitung_shelf_life(
+        saved_jenis,
+        waktu_simpan_jam,
+        suhu_val,
+        gas_val,
+        slope_val,
+        status_ai=status_prediksi,
+    )
+
+    # Logika Monotonik Sejati:
+    # Hanya menahan kenaikan akibat noise sensor (min), tetapi tetap BISA BERKURANG seiring bertambahnya waktu simpan
+    last_sisa = box_config.get("last_sisa_jam", sisa_jam_hitung)
+    sisa_jam = min(last_sisa, sisa_jam_hitung)
+
+    # Simpan pembaruan status ke Firebase
+    if (
+        box_config.get("last_status") != status_prediksi
+        or box_config.get("last_sisa_jam") != sisa_jam
+    ):
+        box_config["last_status"] = status_prediksi
+        box_config["last_sisa_jam"] = sisa_jam
+        box_config["last_max_jam"] = max_jam
+        save_box_config(selected_box, box_config)
+
+    # --- TAMPILAN HASIL PREDIKSI ---
+    col_r1, col_r2 = st.columns([2, 1])
+
+    with col_r1:
+        if status_prediksi == "Aman":
+            st.success(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi."
+            )
+        elif status_prediksi == "Segera konsumsi":
+            st.warning(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
+            )
+        else:
+            st.error(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
+            )
+
+    with col_r2:
+        if status_prediksi == "Tidak disarankan":
+            st.metric(
+                label="Estimasi Sisa Shelf Life",
+                value="0 Jam",
+                delta="Kedaluwarsa",
+                delta_color="inverse",
+            )
+        else:
+            st.metric(
+                label="Estimasi Sisa Shelf Life",
+                value=f"{sisa_jam} Jam",
+                delta=f"Maks: {max_jam} Jam",
+            )
+
+    persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
+    if status_prediksi == "Tidak disarankan":
+        persentase_sisa = 0.0
+
+    st.write(
+        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
+    )
+    st.progress(persentase_sisa)
+else:
+    st.warning(
+        f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
+    )
+
+# LOOP AUTO RERUN
+if auto_refresh:
+    time.sleep(refresh_rate)
+    st.rerun()
