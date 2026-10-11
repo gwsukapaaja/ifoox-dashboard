@@ -104,8 +104,6 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 # ==========================================
 # 📌 SIDEBAR: NAVIGASI HOMEPAGE & KONTROL
 # ==========================================
-st.sidebar.header("⚙️ Navigasi Dashboard")
-
 pilihan_navigasi = [
     "🏠 Homepage (Overview All-Box)",
     "📦 SmartBox #01",
@@ -113,21 +111,30 @@ pilihan_navigasi = [
     "📦 SmartBox #03",
 ]
 
-# Simpan halaman aktif di Session State agar bisa berpilih otomatis dari tombol Homepage
-if "nav_selected" not in st.session_state:
-    st.session_state["nav_selected"] = pilihan_navigasi[0]
+# Inisialisasi State Halaman Utama
+if "page" not in st.session_state:
+    st.session_state["page"] = pilihan_navigasi[0]
 
-# Callback handler untuk sync sidebar
-def update_nav():
-    st.session_state["nav_selected"] = st.session_state["sidebar_radio_key"]
+st.sidebar.header("⚙️ Navigasi Dashboard")
+
+# Gunakan index acuan langsung dari st.session_state["page"]
+idx_curr = (
+    pilihan_navigasi.index(st.session_state["page"])
+    if st.session_state["page"] in pilihan_navigasi
+    else 0
+)
 
 selected_page = st.sidebar.radio(
     "Pilih Halaman Target:",
     pilihan_navigasi,
-    index=pilihan_navigasi.index(st.session_state["nav_selected"]),
-    key="sidebar_radio_key",
-    on_change=update_nav,
+    index=idx_curr,
+    key="sidebar_radio",
 )
+
+# Jika pengguna mengklik manual radio di sidebar, perbarui state
+if selected_page != st.session_state["page"]:
+    st.session_state["page"] = selected_page
+    st.rerun()
 
 st.sidebar.divider()
 
@@ -141,7 +148,7 @@ refresh_rate = st.sidebar.slider(
 # ==========================================
 # 🏠 HALAMAN 1: HOMEPAGE (INTERACTIVE CARDS)
 # ==========================================
-if "Homepage" in selected_page:
+if "Homepage" in st.session_state["page"]:
     st.title("🍱 iFOOX SMARTBOX - OVERVIEW DASHBOARD")
     st.caption("Pilih dan pantau seluruh perangkat SmartBox secara terintegrasi dalam satu layar.")
     st.divider()
@@ -155,10 +162,9 @@ if "Homepage" in selected_page:
             border: 2px solid #e0e0e0;
             border-radius: 16px;
             padding: 20px;
-            margin-bottom: 15px;
+            margin-bottom: 12px;
             box-shadow: 0 4px 6px rgba(0,0,0,0.05);
             transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-            cursor: pointer;
         }
         .box-card:hover {
             transform: translateY(-8px) scale(1.02);
@@ -248,9 +254,9 @@ if "Homepage" in selected_page:
                 unsafe_allow_html=True,
             )
 
-            # Tombol Buka Detail Boks
-            if st.button(f"🔎 Buka {b_id.upper()}", key=f"btn_nav_{b_id}"):
-                st.session_state["nav_selected"] = f"📦 SmartBox #{b_id.split('_')[1]}"
+            # Tombol Navigasi Terisolasi di Kolom Card
+            if st.button(f"🔎 Buka BOX_{b_id.split('_')[1]}", key=f"btn_homepage_{b_id}", type="primary", use_container_width=True):
+                st.session_state["page"] = f"📦 SmartBox #{b_id.split('_')[1]}"
                 st.rerun()
 
 
@@ -258,7 +264,7 @@ if "Homepage" in selected_page:
 # 📦 HALAMAN 2: DETAIL BOKS (MONITORING & FORM)
 # ==========================================
 else:
-    selected_box = f"box_{selected_page.split('#')[1]}"
+    selected_box = f"box_{st.session_state['page'].split('#')[1]}"
 
     # Baca data boks aktif langsung dari Firebase
     full_box_data = read_box_data(selected_box)
