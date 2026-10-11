@@ -30,7 +30,7 @@ except Exception:
     )
 
 
-# --- FUNGSI BACA BOKS DARI FIREBASE ---
+# --- FUNGSI BACA BOKS LENGKAP DARI FIREBASE ---
 def read_box_data(box_id):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
@@ -42,7 +42,7 @@ def read_box_data(box_id):
     return {}
 
 
-# --- FUNGSI SIMPAN CONFIG BOKS KE FIREBASE VIA PATCH ---
+# --- FUNGSI SIMPAN CONFIG (STREAMLIT -> FIREBASE VIA PATCH) ---
 def save_box_config(box_id, config_dict):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}/config.json"
     try:
@@ -109,11 +109,11 @@ selected_box = st.sidebar.radio(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# BACA BOKS LANGSUNG DARI FIREBASE (Mencegah Reset)
+# BACA BOKS LANGSUNG DARI CLOUD FIREBASE
 full_box_data = read_box_data(selected_box)
 box_config = full_box_data.get("config", {})
 
-# Ambil status terkunci & data tersimpan langsung dari Firebase
+# Ambil status terkunci & input tersimpan langsung dari Firebase
 is_saved = box_config.get("is_saved", False)
 saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
 saved_massa = box_config.get("massa_gram", 150)
@@ -204,7 +204,7 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN ---
+# --- 2. INPUT DATA MAKANAN (SISTEM SAVE, LOCK & DELETE 2-WAY PERSISTENCE) ---
 st.subheader(
     f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
@@ -222,7 +222,6 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         "Olahan Susu & Santan",
     ]
 
-    # TANPA PARAMETER key= BIAR GA BIKIN RESET STREAMLIT
     with col_f1:
         idx_makanan = (
             opsi_makanan.index(saved_jenis) if saved_jenis in opsi_makanan else 0
@@ -288,7 +287,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                 save_box_config(selected_box, new_cfg)
                 st.rerun()
         else:
-            st.success("🔒 Form Terkunci di Firebase Database")
+            st.success("🔒 Form Terkunci & Tersimpan Permanen di Cloud Firebase")
 
     with col_btn2:
         if is_saved:
