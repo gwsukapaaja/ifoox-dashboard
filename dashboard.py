@@ -64,9 +64,18 @@ def refresh_token_request(refresh_token):
     return None
 
 
+def get_user_details(id_token):
+    """Mendapatkan informasi detail profil user (termasuk Email) berdasarkan ID Token."""
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:lookup?key={FIREBASE_API_KEY}"
+    payload = {"idToken": id_token}
+    res = requests.post(url, json=payload)
+    if res.status_code == 200 and "users" in res.json():
+        return res.json()["users"][0]
+    return None
+
+
 # --- MANAGEMENT BOKS DINAMIS PER USER ---
 def get_user_box_ids(user_id, auth_token):
-    """Mendapatkan daftar ID boks yang dimiliki user dari Firebase."""
     url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes.json?auth={auth_token}"
     try:
         res = requests.get(url, timeout=3)
@@ -78,11 +87,10 @@ def get_user_box_ids(user_id, auth_token):
                 return [b for b in boxes if b]
     except Exception:
         pass
-    return ["box_01"]  # Default awal jika akun baru terdaftar
+    return ["box_01"]
 
 
 def add_user_box_id(user_id, new_box_id, auth_token):
-    """Menambahkan ID boks baru ke daftar milik user di Firebase."""
     url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes/{new_box_id}.json?auth={auth_token}"
     try:
         requests.put(url, json=True, timeout=3)
@@ -93,7 +101,6 @@ def add_user_box_id(user_id, new_box_id, auth_token):
 # --- FUNGSI BACA BOKS DARI FIREBASE ---
 def read_box_data(user_id, box_id, auth_token):
     data = {}
-    # 1. Baca data sensor real-time publik langsung dari ESP32
     url_sensor = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
         response = requests.get(url_sensor, timeout=3)
@@ -102,7 +109,6 @@ def read_box_data(user_id, box_id, auth_token):
     except Exception:
         pass
 
-    # 2. Baca konfigurasi makanan milik akun user
     url_config = f"{FIREBASE_BASE_URL}/users/{user_id}/boxes/{box_id}/config.json?auth={auth_token}"
     try:
         response = requests.get(url_config, timeout=3)
@@ -114,7 +120,6 @@ def read_box_data(user_id, box_id, auth_token):
     return data
 
 
-# --- FUNGSI SIMPAN CONFIG MENGGUNAKAN PATCH ---
 def save_box_config(user_id, box_id, config_dict, auth_token):
     url = f"{FIREBASE_BASE_URL}/users/{user_id}/boxes/{box_id}/config.json?auth={auth_token}"
     try:
@@ -123,7 +128,6 @@ def save_box_config(user_id, box_id, config_dict, auth_token):
         pass
 
 
-# --- FUNGSI BACA SELURUH BOKS USER ---
 def read_all_boxes(user_id, auth_token, pilihan_boks_list):
     all_data = {}
     for b_id in pilihan_boks_list:
@@ -131,7 +135,6 @@ def read_all_boxes(user_id, auth_token, pilihan_boks_list):
     return all_data
 
 
-# Fungsi Hitung Shelf Life (SINKRON DENGAN AI)
 def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     max_life_map = {
         "Nasi & Karbohidrat": 24,
@@ -177,17 +180,20 @@ if "authenticated" not in st.session_state:
 if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
-# Semak Cookie Browser untuk Auto-Login
+# Semak Cookie Browser untuk Auto-Login jika belum login di session
 saved_refresh_token = cookie_manager.get("ifoox_refresh_token")
 if not st.session_state.authenticated and saved_refresh_token:
     token_data = refresh_token_request(saved_refresh_token)
-    if token_data:
-        saved_email = cookie_manager.get("ifoox_user_email") or "User"
+    if token_data and "id_token" in token_data:
+        # Panggil detail user langsung ke Firebase berdasarkan id_token baru
+        user_detail = get_user_details(token_data["id_token"])
+        email_found = user_detail.get("email") if user_detail else (cookie_manager.get("ifoox_user_email") or "User")
+
         st.session_state.authenticated = True
         st.session_state.user_info = {
             "localId": token_data["user_id"],
             "idToken": token_data["id_token"],
-            "email": saved_email,
+            "email": email_found,
         }
 
 # HALAMAN LOGIN / REGISTER JIKA BELUM AUTHENTICATED
@@ -244,7 +250,7 @@ if not st.session_state.authenticated:
 # ==========================================
 user_id = st.session_state.user_info["localId"]
 auth_token = st.session_state.user_info["idToken"]
-user_email = st.session_state.user_info["email"]
+user_email = st.session_state.user_info.get("email", "User")
 
 # Dapatkan Boks Milik User dari Firebase (Dinamis)
 pilihan_boks = get_user_box_ids(user_id, auth_token)
