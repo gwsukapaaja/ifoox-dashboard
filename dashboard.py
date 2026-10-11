@@ -270,6 +270,7 @@ def buka_detail_box(box_id_pilihan):
 
 
 # ==========================================
+# ==========================================
 # 🏠 HOMEPAGE: OVERVIEW RINGKAS
 # ==========================================
 if st.session_state.page == "home":
@@ -279,8 +280,37 @@ if st.session_state.page == "home":
     st.divider()
 
     if not pilihan_boks:
-        st.info("💡 **Belum ada SmartBox terdaftar.** Tambahkan ID SmartBox kamu pada menu sidebar sebelah kiri.")
+        # --- TAMPILAN JIKA BELUM ADA BOKS (DENGAN TOMBOL BESAR) ---
+        st.write("")
+        st.write("")
+        
+        col_a, col_b, col_c = st.columns([1, 2, 1])
+        with col_b:
+            st.markdown("""
+            <div style="text-align: center; padding: 30px; border: 2px dashed #3286c8; border-radius: 16px; background-color: rgba(50, 134, 200, 0.05);">
+                <h2 style="margin-bottom: 10px;">📦 Belum Ada SmartBox</h2>
+                <p style="color: gray; margin-bottom: 20px;">Tambahkan perangkat SmartBox pertama kamu untuk mulai memantau kualitas makanan berbasis AI.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.write("")
+            
+            # Form Tambah Boks Langsung di Halaman Utama
+            with st.form("form_tambah_box_utama"):
+                st.subheader("➕ Tambah SmartBox Baru")
+                input_box_baru = st.text_input("Masukkan ID SmartBox (misal: box_01, box_02)", placeholder="box_01")
+                btn_simpan_utama = st.form_submit_button("➕ Tambah SmartBox", type="primary", use_container_width=True)
+                
+                if btn_simpan_utama:
+                    clean_id = input_box_baru.strip()
+                    if clean_id:
+                        add_user_box_id(user_id, clean_id, auth_token)
+                        st.session_state.target_box = clean_id
+                        st.success(f"Berhasil menambahkan {clean_id}!")
+                        st.rerun()
+                    else:
+                        st.warning("Mohon isi ID SmartBox terlebih dahulu.")
     else:
+        # --- TAMPILAN JIKA SUDAH ADA BOKS ---
         statuses = []
         for b_id in pilihan_boks:
             b_data = all_boxes_data.get(b_id, {}) or {}
@@ -301,7 +331,21 @@ if st.session_state.page == "home":
         c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
         
         st.write("")
-        st.subheader("Daftar SmartBox")
+        col_title, col_btn_add = st.columns([3, 1])
+        with col_title:
+            st.subheader("Daftar SmartBox")
+            
+        with col_btn_add:
+            # Tombol Tambah Boks Tambahan di Atas Grid
+            with st.popover("➕ Tambah Boks Baru", use_container_width=True):
+                st.write("### Tambah SmartBox")
+                input_pop = st.text_input("ID SmartBox", key="pop_input_box")
+                if st.button("Simpan Boks", type="primary", use_container_width=True):
+                    clean_pop = input_pop.strip()
+                    if clean_pop:
+                        add_user_box_id(user_id, clean_pop, auth_token)
+                        st.session_state.target_box = clean_pop
+                        st.rerun()
 
         cols = st.columns(min(len(pilihan_boks), 3), gap="medium")
         for i, b_id in enumerate(pilihan_boks):
@@ -336,8 +380,6 @@ if st.session_state.page == "home":
                 st.button(f"Buka Box #{b_id}", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
 
     st.stop()
-
-
 # ==========================================
 # ⚙️ SIDEBAR MANAGEMENT
 # ==========================================
