@@ -18,8 +18,10 @@ st.set_page_config(
 # Set Zona Waktu WIB (Asia/Jakarta)
 wib_tz = pytz.timezone("Asia/Jakarta")
 
-# BASE URL FIREBASE
+# FIREBASE CONFIG
 FIREBASE_BASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebasedatabase.app"
+# Dapatkan Web API Key dari Firebase Console -> Project Settings -> General -> Web API Key
+FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", "AIzaSyB30K84Ka0ZsfDR06PcBzbJfmEbl8ZQunw")
 
 # Load Model AI
 try:
@@ -28,9 +30,31 @@ except Exception:
     st.error("❌ Model AI belum ditemukan! Jalankan 'python3 train_model.py' dulu.")
 
 
-# --- FUNGSI BACA BOKS DARI FIREBASE ---
-def read_box_data(box_id):
-    url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
+# --- FUNGSI AUTHENTICATION FIREBASE ---
+def login_user(email, password):
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={FIREBASE_API_KEY}"
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    res = requests.post(url, json=payload)
+    if res.status_code == 200:
+        return res.json()  # Mengembalikan idToken, localId (uid), email, dll.
+    else:
+        return None
+
+
+def register_user(email, password):
+    url = f"https://identitytoolkit.googleapis.com/v1/accounts:signUp?key={FIREBASE_API_KEY}"
+    payload = {"email": email, "password": password, "returnSecureToken": True}
+    res = requests.post(url, json=payload)
+    if res.status_code == 200:
+        return res.json()
+    else:
+        err_msg = res.json().get("error", {}).get("message", "Gagal mendaftar")
+        return {"error": err_msg}
+
+
+# --- FUNGSI BACA BOKS DARI FIREBASE (PER USER) ---
+def read_box_data(user_id, box_id, auth_token):
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/boxes/{box_id}.json?auth={auth_token}"
     try:
         response = requests.get(url, timeout=3)
         if response.status_code == 200 and response.json():
@@ -41,17 +65,17 @@ def read_box_data(box_id):
 
 
 # --- FUNGSI SIMPAN CONFIG MENGGUNAKAN PATCH ---
-def save_box_config(box_id, config_dict):
-    url = f"{FIREBASE_BASE_URL}/boxes/{box_id}/config.json"
+def save_box_config(user_id, box_id, config_dict, auth_token):
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/boxes/{box_id}/config.json?auth={auth_token}"
     try:
         requests.patch(url, json=config_dict, timeout=3)
     except Exception:
         pass
 
 
-# --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW ---
-def read_all_boxes():
-    url = f"{FIREBASE_BASE_URL}/boxes.json"
+# --- FUNGSI BACA SELURUH BOKS USER ---
+def read_all_boxes(user_id, auth_token):
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/boxes.json?auth={auth_token}"
     try:
         response = requests.get(url, timeout=3)
         if response.status_code == 200 and response.json():
@@ -91,7 +115,6 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     jam_terpakai_efektif = durasi_jam * faktor_gas * faktor_suhu * faktor_slope
     sisa_jam = max(0, int(max_hours - jam_terpakai_efektif))
 
-    # --- PENYESUAIAN SINKRONISASI AI ---
     if status_ai == "Segera konsumsi":
         sisa_jam = min(sisa_jam, max(1, int(max_hours * 0.3)))
     elif status_ai != "Aman":
@@ -101,8 +124,62 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
 
 # ==========================================
-# 🏠 INITIALIZE SESSION STATE & CSS
+# 🔑 MANAGEMENT SESSION AUTHENTICATION
 # ==========================================
+if "authenticated" not in st.session_state:
+    st.session_state.authenticated = False
+if "user_info" not in st.session_state:
+    st.session_state.user_info = None
+
+# HALAMAN LOGIN / REGISTER JIKA BELUM AUTHENTICATED
+if not st.session_state.authenticated:
+    st.markdown("<h1 style='text-align: center;'>🍱 iFOOX Smartbox</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 style='text-align: center;'>Portal Masuk Akun Monitoring</h3>", unsafe_allow_html=True)
+    st.write("")
+
+    col_auth1, col_auth2, col_auth3 = st.columns([1, 2, 1])
+    with col_auth2:
+        tab_login, tab_register = st.tabs(["🔒 Login", "📝 Daftar Akun Baru"])
+
+        with tab_login:
+            login_email = st.text_input("Email", key="login_email")
+            login_pass = st.text_input("Password", type="password", key="login_pass")
+            if st.button("Masuk ke Dashboard", type="primary", use_container_width=True):
+                if login_email and login_pass:
+                    auth_data = login_user(login_email, login_pass)
+                    if auth_data:
+                        st.session_state.authenticated = True
+                        st.session_state.user_info = auth_data
+                        st.success("Berhasil login!")
+                        st.rerun()
+                    else:
+                        st.error("Email atau Password salah!")
+                else:
+                    st.warning("Mohon isi Email dan Password.")
+
+        with tab_register:
+            reg_email = st.text_input("Email Baru", key="reg_email")
+            reg_pass = st.text_input("Password Baru (min 6 karakter)", type="password", key="reg_pass")
+            if st.button("Buat Akun", use_container_width=True):
+                if reg_email and reg_pass:
+                    res = register_user(reg_email, reg_pass)
+                    if "error" not in res:
+                        st.success("Akun berhasil dibuat! Silakan login di tab 'Login'.")
+                    else:
+                        st.error(f"Gagal pendaftaran: {res['error']}")
+                else:
+                    st.warning("Mohon isi seluruh form pendaftaran.")
+
+    st.stop()  # Hentikan eksekusi kode dashboard jika belum login
+
+
+# ==========================================
+# 🏠 HOMEPAGE: OVERVIEW MULTI-SMARTBOX
+# ==========================================
+user_id = st.session_state.user_info["localId"]
+auth_token = st.session_state.user_info["idToken"]
+user_email = st.session_state.user_info["email"]
+
 pilihan_boks = ["box_01", "box_02", "box_03"]
 
 if "page" not in st.session_state:
@@ -146,18 +223,13 @@ div[data-testid="stButton"] > button:hover {
 </style>
 """, unsafe_allow_html=True)
 
-
-# ==========================================
-# 🏠 MODE 1: HOMEPAGE (OVERVIEW ALL-BOX)
-# ==========================================
 if st.session_state.page == "home":
-    all_boxes_data = read_all_boxes()
+    all_boxes_data = read_all_boxes(user_id, auth_token)
     st.markdown("# 🍱 iFOOX SMARTBOX")
-    st.markdown("### Smart food storage, monitored in one place.")
+    st.markdown(f"### Selamat datang, `{user_email}` 👋")
     st.caption("Overview perangkat • sensor real-time • prediksi kualitas makanan berbasis AI")
     st.divider()
 
-    # Ringkasan global
     statuses = []
     for b_id in pilihan_boks:
         b_data = all_boxes_data.get(b_id, {}) or {}
@@ -176,9 +248,7 @@ if st.session_state.page == "home":
     c1.metric("Total SmartBox", len(pilihan_boks))
     c2.metric("Perangkat Online", sum(1 for s in statuses if s != "Offline"))
     c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
-    
     st.markdown("## Pilih SmartBox")
-    st.caption("Klik tombol pada boks yang ingin dipantau.")
 
     cols = st.columns(3, gap="large")
     for i, b_id in enumerate(pilihan_boks):
@@ -205,7 +275,7 @@ if st.session_state.page == "home":
         with cols[i]:
             st.markdown(f"""
             <div class="box-summary">
-              <div class="box-subtitle">iFOOX • MULTI-DEVICE</div>
+              <div class="box-subtitle">IFO OX • MULTI-DEVICE</div>
               <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id[-2:]}</h3>
               <div class="box-status" style="color:{color};">{dot} {status}</div>
               <div class="box-subtitle">🌡️ Suhu <b>{temp:.1f} °C</b> &nbsp; · &nbsp; 💧 RH <b>{rh:.1f}%</b></div>
@@ -219,10 +289,8 @@ if st.session_state.page == "home":
                 progress = max(0.0, min(1.0, float(sisa) / max(1.0, float(maksimum)))) if b_cfg.get("is_saved", False) else 0.0
             except (ValueError, TypeError, ZeroDivisionError):
                 progress = 0.0
-                
             st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
             st.progress(progress)
-            
             if st.button(f"Buka SmartBox #{b_id[-2:]} →", key=f"open_{b_id}", use_container_width=True):
                 st.session_state.selected_box = b_id
                 st.session_state.page = "box"
@@ -234,8 +302,16 @@ if st.session_state.page == "home":
 
 
 # ==========================================
-# ⚙️ SIDEBAR: KONTROL PERANGKAT & RINGKASAN
+# ⚙️ SIDEBAR: KONTROL PERANGKAT & LOGOUT
 # ==========================================
+st.sidebar.header("👤 Akun Saya")
+st.sidebar.write(f"Logged in as: **{user_email}**")
+if st.sidebar.button("🚪 Logout / Keluar", use_container_width=True):
+    st.session_state.authenticated = False
+    st.session_state.user_info = None
+    st.rerun()
+
+st.sidebar.divider()
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
 if st.sidebar.button("← Kembali ke Homepage", use_container_width=True):
@@ -246,13 +322,12 @@ selected_box = st.sidebar.radio(
     "Pilih SmartBox Target:",
     pilihan_boks,
     index=pilihan_boks.index(st.session_state.selected_box),
-    key="selected_box_radio",
+    key="selected_box",
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
-st.session_state.selected_box = selected_box
 
 # Baca data boks langsung dari Cloud Firebase Database
-full_box_data = read_box_data(selected_box)
+full_box_data = read_box_data(user_id, selected_box, auth_token)
 box_config = full_box_data.get("config", {})
 
 # Ambil status dan konfigurasi tersimpan
@@ -271,7 +346,7 @@ st.sidebar.divider()
 
 # RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR
 st.sidebar.subheader("🌐 Status Ringkas All-Box")
-all_boxes_data = read_all_boxes()
+all_boxes_data = read_all_boxes(user_id, auth_token)
 
 for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
@@ -393,7 +468,10 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             disabled=is_saved,
         )
 
-        list_jam = [f"{h:02d}:{m:02d}" for h in range(24) for m in range(0, 60, 15)]
+        list_jam = []
+        for h in range(24):
+            for m in range(0, 60, 15):
+                list_jam.append(f"{h:02d}:{m:02d}")
 
         idx_default = (
             list_jam.index(saved_jam_str) if saved_jam_str in list_jam else 0
@@ -405,7 +483,6 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             disabled=is_saved,
         )
 
-    # TOMBOL SAVE/LOCK & DELETE/RESET
     col_btn1, col_btn2 = st.columns([1, 1])
 
     with col_btn1:
@@ -421,7 +498,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                     "last_sisa_jam": 24,
                     "last_max_jam": 24,
                 }
-                save_box_config(selected_box, new_cfg)
+                save_box_config(user_id, selected_box, new_cfg, auth_token)
                 st.rerun()
         else:
             st.success("🔒 Form Terkunci di Firebase Database")
@@ -439,10 +516,9 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                     "last_sisa_jam": 0,
                     "last_max_jam": 24,
                 }
-                save_box_config(selected_box, reset_cfg)
+                save_box_config(user_id, selected_box, reset_cfg, auth_token)
                 st.rerun()
 
-    # Hitung durasi simpan real-time jika terkunci
     if is_saved:
         jam_h, jam_m = map(int, saved_jam_str.split(":"))
         waktu_gabung_naive = datetime.combine(
@@ -478,8 +554,7 @@ if is_saved:
 
     status_prediksi = model.predict(df_input)[0]
 
-    # PASSING status_prediksi KE HITUNG SHELF LIFE REAL-TIME
-    sisa_jam_hitung, max_jam = hitung_shelf_life(
+    sisa_jam, max_jam = hitung_shelf_life(
         saved_jenis,
         waktu_simpan_jam,
         suhu_val,
@@ -488,12 +563,10 @@ if is_saved:
         status_ai=status_prediksi,
     )
 
-    # Logika Monotonik Sejati:
-    # Hanya menahan kenaikan akibat noise sensor (min), tetapi tetap BISA BERKURANG seiring bertambahnya waktu simpan
-    last_sisa = box_config.get("last_sisa_jam", sisa_jam_hitung)
-    sisa_jam = min(last_sisa, sisa_jam_hitung)
+    last_sisa = box_config.get("last_sisa_jam", sisa_jam)
+    if last_sisa > 0 and sisa_jam > last_sisa:
+        sisa_jam = last_sisa
 
-    # Simpan pembaruan status ke Firebase
     if (
         box_config.get("last_status") != status_prediksi
         or box_config.get("last_sisa_jam") != sisa_jam
@@ -501,27 +574,20 @@ if is_saved:
         box_config["last_status"] = status_prediksi
         box_config["last_sisa_jam"] = sisa_jam
         box_config["last_max_jam"] = max_jam
-        save_box_config(selected_box, box_config)
+        save_box_config(user_id, selected_box, box_config, auth_token)
 
-    # --- TAMPILAN HASIL PREDIKSI ---
     col_r1, col_r2 = st.columns([2, 1])
 
     with col_r1:
         if status_prediksi == "Aman":
             st.success(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi."
-            )
+            st.write("🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi.")
         elif status_prediksi == "Segera konsumsi":
             st.warning(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
-            )
+            st.write("⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!")
         else:
             st.error(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
-            )
+            st.write("🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi.")
 
     with col_r2:
         if status_prediksi == "Tidak disarankan":
@@ -542,16 +608,13 @@ if is_saved:
     if status_prediksi == "Tidak disarankan":
         persentase_sisa = 0.0
 
-    st.write(
-        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
-    )
+    st.write(f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**")
     st.progress(persentase_sisa)
 else:
     st.warning(
         f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
     )
 
-# LOOP AUTO RERUN
 if auto_refresh:
     time.sleep(refresh_rate)
     st.rerun()
