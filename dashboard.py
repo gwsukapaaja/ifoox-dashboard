@@ -42,7 +42,7 @@ def read_box_data(box_id):
     return {}
 
 
-# --- FUNGSI SIMPAN/UPDATE CONFIG BOKS KE FIREBASE ---
+# --- FUNGSI SIMPAN CONFIG BOKS KE FIREBASE VIA HTTP PUT ---
 def save_box_config(box_id, config_dict):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}/config.json"
     try:
@@ -97,7 +97,7 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
 
 
 # ==========================================
-# 📌 SIDEBAR: KONTROL PERANGKAT & RINGKASAN ONLY
+# 📌 SIDEBAR: KONTROL PERANGKAT & RINGKASAN
 # ==========================================
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
@@ -109,11 +109,11 @@ selected_box = st.sidebar.radio(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# Baca data lengkap boks aktif dari Firebase
+# Baca data lengkap boks aktif langsung dari Firebase
 full_box_data = read_box_data(selected_box)
 box_config = full_box_data.get("config", {})
 
-# Nilai default config jika belum di-save
+# Status Kunci dari Firebase
 is_saved = box_config.get("is_saved", False)
 saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
 saved_massa = box_config.get("massa_gram", 150)
@@ -204,7 +204,7 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (SISTEM PERSISTENCE FIREBASE) ---
+# --- 2. INPUT DATA MAKANAN (SISTEM SAVE & LOCK PERMANEN) ---
 st.subheader(
     f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
@@ -231,7 +231,6 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             opsi_makanan,
             index=idx_makanan,
             disabled=is_saved,
-            key=f"jenis_{selected_box}",
         )
         massa_gram = st.number_input(
             "Berat Makanan (Gram)",
@@ -239,17 +238,19 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             max_value=2000,
             value=int(saved_massa),
             disabled=is_saved,
-            key=f"massa_{selected_box}",
         )
 
     now_wib = datetime.now(wib_tz)
     with col_f2:
-        tgl_parsed = datetime.strptime(saved_tgl_str, "%Y-%m-%d").date()
+        try:
+            tgl_parsed = datetime.strptime(saved_tgl_str, "%Y-%m-%d").date()
+        except Exception:
+            tgl_parsed = now_wib.date()
+
         tgl_masuk = st.date_input(
             "Tanggal Penyimpanan",
             value=tgl_parsed,
             disabled=is_saved,
-            key=f"tgl_{selected_box}",
         )
 
         list_jam = []
@@ -265,10 +266,9 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             list_jam,
             index=idx_default,
             disabled=is_saved,
-            key=f"jam_{selected_box}",
         )
 
-    # TOMBOL KONTROL SAVE/LOCK & DELETE/RESET
+    # TOMBOL SAVE/LOCK & DELETE/RESET
     col_btn1, col_btn2 = st.columns([1, 1])
 
     with col_btn1:
@@ -287,7 +287,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                 save_box_config(selected_box, new_cfg)
                 st.rerun()
         else:
-            st.success("🔒 Form Terkunci di Firebase (Makanan Sedang Dipantau AI)")
+            st.success("🔒 Form Terkunci di Firebase Database")
 
     with col_btn2:
         if is_saved:
@@ -305,7 +305,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                 save_box_config(selected_box, reset_cfg)
                 st.rerun()
 
-    # Hitung durasi jika boks terkunci
+    # Hitung durasi simpan real-time jika terkunci
     if is_saved:
         jam_h, jam_m = map(int, saved_jam_str.split(":"))
         waktu_gabung_naive = datetime.combine(
@@ -320,7 +320,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         )
 
 
-# --- 3. PROSES KALKULASI AI REAL-TIME (DENGAN FIREBASE PERSISTENCE) ---
+# --- 3. KALKULASI AI REAL-TIME (DENGAN FIREBASE PERSISTENCE) ---
 if is_saved:
     payload_dict = {
         "suhu_c": suhu_val,
@@ -350,7 +350,7 @@ if is_saved:
     if last_sisa > 0 and sisa_jam > last_sisa:
         sisa_jam = last_sisa
 
-    # Simpan pembaruan status ke Firebase secara halus
+    # Simpan pembaruan status ke Firebase
     if (
         box_config.get("last_status") != status_prediksi
         or box_config.get("last_sisa_jam") != sisa_jam
