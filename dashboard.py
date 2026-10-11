@@ -111,9 +111,9 @@ pilihan_navigasi = [
     "📦 SmartBox #03",
 ]
 
-# FIX PERMANEN NAVIGASI: Set nilai default ke sidebar_radio
-if "sidebar_radio" not in st.session_state:
-    st.session_state["sidebar_radio"] = pilihan_navigasi[0]
+# Callback Function untuk mengubah navigasi secara aman
+def switch_page(target_page):
+    st.session_state["sidebar_radio"] = target_page
 
 st.sidebar.header("⚙️ Navigasi Dashboard")
 
@@ -241,10 +241,16 @@ if "Homepage" in selected_page:
                 unsafe_allow_html=True,
             )
 
-            # FIX BUKA BOKS: Mengubah key 'sidebar_radio' secara langsung!
-            if st.button(f"🔎 Buka BOX_{b_id.split('_')[1]}", key=f"btn_homepage_{b_id}", type="primary", use_container_width=True):
-                st.session_state["sidebar_radio"] = f"📦 SmartBox #{b_id.split('_')[1]}"
-                st.rerun()
+            target_box_name = f"📦 SmartBox #{b_id.split('_')[1]}"
+            # Panggil callback function via on_click & args
+            st.button(
+                f"🔎 Buka BOX_{b_id.split('_')[1]}",
+                key=f"btn_homepage_{b_id}",
+                type="primary",
+                use_container_width=True,
+                on_click=switch_page,
+                args=(target_box_name,),
+            )
 
 
 # ==========================================
