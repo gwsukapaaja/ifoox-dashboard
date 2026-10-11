@@ -30,8 +30,23 @@ except Exception:
     )
 
 
-# --- FUNGSI BACA BOKS (SENSOR + CONFIG) DARI FIREBASE ---
-def read_box_data(box_id):
+# --- INISIALISASI SESSION STATE INDEPENDEN PER BOKS ---
+def init_box_state(box_id):
+    if box_id not in st.session_state:
+        st.session_state[box_id] = {
+            "is_saved": False,  # Status Kunci Form (Save & Lock)
+            "jenis_makanan": "Nasi & Karbohidrat",
+            "massa_gram": 150,
+            "tgl_masuk": datetime.now(wib_tz).date(),
+            "jam_pilihan_str": f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
+            "last_status": "Belum Ada Makanan",
+            "last_sisa_jam": 0,
+            "last_max_jam": 24,
+        }
+
+
+# --- FUNGSI BACA DATA FIREBASE KHUSUS SATU BOKS ---
+def read_sensor_data(box_id):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
         response = requests.get(url, timeout=3)
@@ -39,16 +54,13 @@ def read_box_data(box_id):
             return response.json()
     except Exception:
         pass
-    return {}
-
-
-# --- FUNGSI SIMPAN CONFIG BOKS KE FIREBASE VIA HTTP PUT ---
-def save_box_config(box_id, config_dict):
-    url = f"{FIREBASE_BASE_URL}/boxes/{box_id}/config.json"
-    try:
-        requests.put(url, json=config_dict, timeout=3)
-    except Exception:
-        pass
+    return {
+        "suhu_c": 0.0,
+        "kelembapan_rh": 0.0,
+        "kadar_gas_ppm": 0.0,
+        "slope_gas": 0.0,
+        "last_update": "Belum ada data",
+    }
 
 
 # --- FUNGSI BACA SELURUH BOKS UNTUK OVERVIEW SIDEBAR ---
@@ -97,11 +109,15 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
 
 
 # ==========================================
-# 📌 SIDEBAR: KONTROL PERANGKAT & RINGKASAN
+# 📌 SIDEBAR: KONTROL PERANGKAT & RINGKASAN ONLY
 # ==========================================
 st.sidebar.header("⚙️ Kontrol Perangkat")
 
 pilihan_boks = ["box_01", "box_02", "box_03"]
+
+# Inisialisasi state untuk semua boks lebih awal
+for b_id in pilihan_boks:
+    init_box_state(b_id)
 
 selected_box = st.sidebar.radio(
     "Pilih SmartBox Target:",
@@ -109,21 +125,8 @@ selected_box = st.sidebar.radio(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# Baca data lengkap boks aktif langsung dari Firebase
-full_box_data = read_box_data(selected_box)
-box_config = full_box_data.get("config", {})
-
-# Status Kunci dari Firebase
-is_saved = box_config.get("is_saved", False)
-saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
-saved_massa = box_config.get("massa_gram", 150)
-saved_tgl_str = box_config.get(
-    "tgl_masuk", datetime.now(wib_tz).strftime("%Y-%m-%d")
-)
-saved_jam_str = box_config.get(
-    "jam_pilihan_str",
-    f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
-)
+box_state = st.session_state[selected_box]
+sensor_data = read_sensor_data(selected_box)
 
 st.sidebar.divider()
 
@@ -135,14 +138,14 @@ for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
     b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
     b_temp = float(b_data.get("suhu_c", 0.0))
-    b_cfg = b_data.get("config", {})
+    b_st = st.session_state[b_id]
 
     if b_gas == 0.0 and b_temp == 0.0:
         status_ringkas = "⚪ Offline"
-    elif not b_cfg.get("is_saved", False):
+    elif not b_st["is_saved"]:
         status_ringkas = "🟦 Kosong / Unlocked"
     else:
-        st_ai = b_cfg.get("last_status", "Aman")
+        st_ai = b_st.get("last_status", "Aman")
         if st_ai == "Aman":
             status_ringkas = "🟢 Aman"
         elif st_ai == "Segera konsumsi":
@@ -182,10 +185,10 @@ st.subheader(
 )
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
-suhu_val = float(full_box_data.get("suhu_c", 0.0))
-rh_val = float(full_box_data.get("kelembapan_rh", 0.0))
-gas_val = float(full_box_data.get("kadar_gas_ppm", 0.0))
-slope_val = float(full_box_data.get("slope_gas", 0.0))
+suhu_val = float(sensor_data.get("suhu_c", 0.0))
+rh_val = float(sensor_data.get("kelembapan_rh", 0.0))
+gas_val = float(sensor_data.get("kadar_gas_ppm", 0.0))
+slope_val = float(sensor_data.get("slope_gas", 0.0))
 
 col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
 col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
@@ -204,10 +207,12 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (SISTEM SAVE & LOCK PERMANEN) ---
+# --- 2. INPUT DATA MAKANAN (SISTEM SAVE, LOCK & DELETE) ---
 st.subheader(
     f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
+
+is_locked = box_state["is_saved"]
 
 with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
     col_f1, col_f2 = st.columns(2)
@@ -224,33 +229,33 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
 
     with col_f1:
         idx_makanan = (
-            opsi_makanan.index(saved_jenis) if saved_jenis in opsi_makanan else 0
+            opsi_makanan.index(box_state["jenis_makanan"])
+            if box_state["jenis_makanan"] in opsi_makanan
+            else 0
         )
         jenis_makanan = st.selectbox(
             "Jenis Makanan",
             opsi_makanan,
             index=idx_makanan,
-            disabled=is_saved,
+            disabled=is_locked,  # Terkunci jika sudah disave
+            key=f"jenis_{selected_box}",
         )
         massa_gram = st.number_input(
             "Berat Makanan (Gram)",
             min_value=10,
             max_value=2000,
-            value=int(saved_massa),
-            disabled=is_saved,
+            value=int(box_state["massa_gram"]),
+            disabled=is_locked,  # Terkunci jika sudah disave
+            key=f"massa_{selected_box}",
         )
 
     now_wib = datetime.now(wib_tz)
     with col_f2:
-        try:
-            tgl_parsed = datetime.strptime(saved_tgl_str, "%Y-%m-%d").date()
-        except Exception:
-            tgl_parsed = now_wib.date()
-
         tgl_masuk = st.date_input(
             "Tanggal Penyimpanan",
-            value=tgl_parsed,
-            disabled=is_saved,
+            value=box_state["tgl_masuk"],
+            disabled=is_locked,  # Terkunci jika sudah disave
+            key=f"tgl_{selected_box}",
         )
 
         list_jam = []
@@ -258,58 +263,49 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             for m in range(0, 60, 15):
                 list_jam.append(f"{h:02d}:{m:02d}")
 
+        jam_default = box_state["jam_pilihan_str"]
         idx_default = (
-            list_jam.index(saved_jam_str) if saved_jam_str in list_jam else 0
+            list_jam.index(jam_default) if jam_default in list_jam else 0
         )
+
         jam_pilihan_str = st.selectbox(
             "Jam Penyimpanan",
             list_jam,
             index=idx_default,
-            disabled=is_saved,
+            disabled=is_locked,  # Terkunci jika sudah disave
+            key=f"jam_{selected_box}",
         )
 
-    # TOMBOL SAVE/LOCK & DELETE/RESET
+    # TOMBOL KONTROL SAVE/LOCK & DELETE/RESET
     col_btn1, col_btn2 = st.columns([1, 1])
 
     with col_btn1:
-        if not is_saved:
+        if not is_locked:
             if st.button("💾 Simpan & Kunci Makanan", type="primary"):
-                new_cfg = {
-                    "is_saved": True,
-                    "jenis_makanan": jenis_makanan,
-                    "massa_gram": massa_gram,
-                    "tgl_masuk": tgl_masuk.strftime("%Y-%m-%d"),
-                    "jam_pilihan_str": jam_pilihan_str,
-                    "last_status": "Aman",
-                    "last_sisa_jam": 24,
-                    "last_max_jam": 24,
-                }
-                save_box_config(selected_box, new_cfg)
+                box_state["jenis_makanan"] = jenis_makanan
+                box_state["massa_gram"] = massa_gram
+                box_state["tgl_masuk"] = tgl_masuk
+                box_state["jam_pilihan_str"] = jam_pilihan_str
+                box_state["is_saved"] = True
                 st.rerun()
         else:
-            st.success("🔒 Form Terkunci di Firebase Database")
+            st.success("🔒 Form Terkunci (Makanan Sedang Dipantau AI)")
 
     with col_btn2:
-        if is_saved:
+        if is_locked:
             if st.button("🗑️ Hapus / Kosongkan Boks"):
-                reset_cfg = {
-                    "is_saved": False,
-                    "jenis_makanan": "Nasi & Karbohidrat",
-                    "massa_gram": 150,
-                    "tgl_masuk": datetime.now(wib_tz).strftime("%Y-%m-%d"),
-                    "jam_pilihan_str": f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
-                    "last_status": "Belum Ada Makanan",
-                    "last_sisa_jam": 0,
-                    "last_max_jam": 24,
-                }
-                save_box_config(selected_box, reset_cfg)
+                box_state["is_saved"] = False
+                box_state["last_status"] = "Belum Ada Makanan"
+                box_state["last_sisa_jam"] = 0
+                box_state["last_max_jam"] = 24
                 st.rerun()
 
-    # Hitung durasi simpan real-time jika terkunci
-    if is_saved:
-        jam_h, jam_m = map(int, saved_jam_str.split(":"))
+    # Hitung waktu simpan jika boks terkunci
+    if is_locked:
+        jam_h, jam_m = map(int, box_state["jam_pilihan_str"].split(":"))
         waktu_gabung_naive = datetime.combine(
-            tgl_parsed, datetime.min.time().replace(hour=jam_h, minute=jam_m)
+            box_state["tgl_masuk"],
+            datetime.min.time().replace(hour=jam_h, minute=jam_m),
         )
         waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
 
@@ -320,19 +316,21 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         )
 
 
-# --- 3. KALKULASI AI REAL-TIME (DENGAN FIREBASE PERSISTENCE) ---
-if is_saved:
+# --- 3. PROSES KALKULASI AI REAL-TIME (HANYA JIKA BOKS TERKUNCI/DISIMPAN) ---
+if box_state["is_saved"]:
     payload_dict = {
         "suhu_c": suhu_val,
         "kelembapan_rh": rh_val,
-        "massa_gram": saved_massa,
+        "massa_gram": box_state["massa_gram"],
         "kadar_gas_ppm": gas_val,
         "waktu_simpan_jam": waktu_simpan_jam,
     }
 
     for item in opsi_makanan:
         col_name = f"jenis_makanan_{item}"
-        payload_dict[col_name] = 1 if saved_jenis == item else 0
+        payload_dict[col_name] = (
+            1 if box_state["jenis_makanan"] == item else 0
+        )
 
     df_input = pd.DataFrame([payload_dict])
 
@@ -342,25 +340,23 @@ if is_saved:
     status_prediksi = model.predict(df_input)[0]
 
     sisa_jam, max_jam = hitung_shelf_life(
-        saved_jenis, waktu_simpan_jam, suhu_val, gas_val, slope_val
+        box_state["jenis_makanan"],
+        waktu_simpan_jam,
+        suhu_val,
+        gas_val,
+        slope_val,
     )
 
-    # Logika Monotonik mutlak (sisa jam tidak naik)
-    last_sisa = box_config.get("last_sisa_jam", sisa_jam)
+    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS
+    last_sisa = box_state.get("last_sisa_jam", sisa_jam)
     if last_sisa > 0 and sisa_jam > last_sisa:
         sisa_jam = last_sisa
 
-    # Simpan pembaruan status ke Firebase
-    if (
-        box_config.get("last_status") != status_prediksi
-        or box_config.get("last_sisa_jam") != sisa_jam
-    ):
-        box_config["last_status"] = status_prediksi
-        box_config["last_sisa_jam"] = sisa_jam
-        box_config["last_max_jam"] = max_jam
-        save_box_config(selected_box, box_config)
+    box_state["last_sisa_jam"] = sisa_jam
+    box_state["last_max_jam"] = max_jam
+    box_state["last_status"] = status_prediksi
 
-    # --- TAMPILAN HASIL PREDIKSI ---
+    # --- TAMPILAN HASIL PREDIKSI REAL-TIME ---
     col_r1, col_r2 = st.columns([2, 1])
 
     with col_r1:
