@@ -38,9 +38,8 @@ def init_box_state(box_id):
             "massa_gram": 150,
             "tgl_masuk": datetime.now(wib_tz).date(),
             "jam_pilihan_str": f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
-            "sudah_dianalisis": False,
-            "last_status": "Belum Dianalisis",
-            "last_sisa_jam": 0,
+            "last_status": "Aman",
+            "last_sisa_jam": 24,
             "last_max_jam": 24,
         }
 
@@ -119,7 +118,6 @@ pilihan_boks = ["box_01", "box_02", "box_03"]
 for b_id in pilihan_boks:
     init_box_state(b_id)
 
-# Pemilihan Boks Menggunakan Radio Button (Bukan Dropdown)
 selected_box = st.sidebar.radio(
     "Pilih SmartBox Target:",
     pilihan_boks,
@@ -131,7 +129,7 @@ sensor_data = read_sensor_data(selected_box)
 
 st.sidebar.divider()
 
-# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR (SINKRON SAMA RESULT AI)
+# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR (OTOMATIS SINKRON)
 st.sidebar.subheader("🌐 Status Ringkas All-Box")
 all_boxes_data = read_all_boxes()
 
@@ -139,27 +137,18 @@ for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
     b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
     b_temp = float(b_data.get("suhu_c", 0.0))
-    b_slope = float(b_data.get("slope_gas", 0.0))
 
     if b_gas == 0.0 and b_temp == 0.0:
         status_ringkas = "⚪ Offline"
     else:
         b_st = st.session_state[b_id]
-        if b_st["sudah_dianalisis"]:
-            st_ai = b_st["last_status"]
-            if st_ai == "Aman":
-                status_ringkas = "🟢 Aman"
-            elif st_ai == "Segera konsumsi":
-                status_ringkas = "🟡 Segera Konsumsi"
-            else:
-                status_ringkas = "🔴 Basi / Rawan"
+        st_ai = b_st.get("last_status", "Aman")
+        if st_ai == "Aman":
+            status_ringkas = "🟢 Aman"
+        elif st_ai == "Segera konsumsi":
+            status_ringkas = "🟡 Segera Konsumsi"
         else:
-            if b_gas > 500 or b_slope > 2.0:
-                status_ringkas = "🔴 Basi / Rawan"
-            elif b_gas > 250 or b_temp > 32.0 or b_slope > 0.5:
-                status_ringkas = "🟡 Segera Konsumsi"
-            else:
-                status_ringkas = "🟢 Aman"
+            status_ringkas = "🔴 Basi / Rawan"
 
     st.sidebar.metric(
         label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
@@ -215,9 +204,9 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (INDEPENDEN PER BOKS) ---
+# --- 2. INPUT DATA MAKANAN ---
 st.subheader(
-    f"📝 Form Input & Analisis Prediksi AI - **{selected_box.upper()}**"
+    f"📝 Form Input & Analisis Auto-AI - **{selected_box.upper()}**"
 )
 
 with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
@@ -233,7 +222,6 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         "Olahan Susu & Santan",
     ]
 
-    # Opsi Makanan & Massa (Diikat per boks dengan `key`)
     with col_f1:
         idx_makanan = (
             opsi_makanan.index(box_state["jenis_makanan"])
@@ -254,7 +242,6 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             key=f"massa_{selected_box}",
         )
 
-    # Tanggal & Jam (Diikat per boks dengan `key`)
     now_wib = datetime.now(wib_tz)
     with col_f2:
         tgl_masuk = st.date_input(
@@ -280,112 +267,100 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             key=f"jam_{selected_box}",
         )
 
-    # Simpan kembali nilai input form ke session state boks aktif
+    # Simpan nilai input form ke state
     box_state["jenis_makanan"] = jenis_makanan
     box_state["massa_gram"] = massa_gram
     box_state["tgl_masuk"] = tgl_masuk
     box_state["jam_pilihan_str"] = jam_pilihan_str
 
-    # Parsing jam pilihan ke datetime ber-timezone WIB
+    # Parsing jam pilihan ke datetime WIB
     jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
     waktu_gabung_naive = datetime.combine(
         tgl_masuk, datetime.min.time().replace(hour=jam_h, minute=jam_m)
     )
     waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
 
-    # Kalkulasi Durasi Simpan Presisi (Sama-sama WIB)
+    # Kalkulasi Durasi Simpan
     selisih = now_wib - waktu_gabung_wib
     waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
     st.info(
         f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
     )
 
-# --- 3. TOMBOL & HASIL ANALISIS AI ---
-if st.button("🔍 Hitung Prediksi Shelf Life", type="primary"):
-    payload_dict = {
-        "suhu_c": suhu_val,
-        "kelembapan_rh": rh_val,
-        "massa_gram": massa_gram,
-        "kadar_gas_ppm": gas_val,
-        "waktu_simpan_jam": waktu_simpan_jam,
-    }
+# --- 3. KALKULASI OTOMATIS REAL-TIME AI (TANPA TOMBOL) ---
+payload_dict = {
+    "suhu_c": suhu_val,
+    "kelembapan_rh": rh_val,
+    "massa_gram": massa_gram,
+    "kadar_gas_ppm": gas_val,
+    "waktu_simpan_jam": waktu_simpan_jam,
+}
 
-    for item in opsi_makanan:
-        col_name = f"jenis_makanan_{item}"
-        payload_dict[col_name] = 1 if jenis_makanan == item else 0
+for item in opsi_makanan:
+    col_name = f"jenis_makanan_{item}"
+    payload_dict[col_name] = 1 if jenis_makanan == item else 0
 
-    df_input = pd.DataFrame([payload_dict])
+df_input = pd.DataFrame([payload_dict])
 
-    if hasattr(model, "feature_names_in_"):
-        df_input = df_input[model.feature_names_in_]
+if hasattr(model, "feature_names_in_"):
+    df_input = df_input[model.feature_names_in_]
 
-    status_prediksi = model.predict(df_input)[0]
+status_prediksi = model.predict(df_input)[0]
 
-    sisa_jam, max_jam = hitung_shelf_life(
-        jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
-    )
+sisa_jam, max_jam = hitung_shelf_life(
+    jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
+)
 
-    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS
-    if box_state["sudah_dianalisis"]:
-        last_sisa = box_state.get("last_sisa_jam", sisa_jam)
-        if sisa_jam > last_sisa:
-            sisa_jam = last_sisa
+# LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS (Anti-Naik)
+last_sisa = box_state.get("last_sisa_jam", sisa_jam)
+if sisa_jam > last_sisa:
+    sisa_jam = last_sisa
 
-    box_state["last_sisa_jam"] = sisa_jam
-    box_state["last_max_jam"] = max_jam
-    box_state["last_status"] = status_prediksi
-    box_state["sudah_dianalisis"] = True
+box_state["last_sisa_jam"] = sisa_jam
+box_state["last_max_jam"] = max_jam
+box_state["last_status"] = status_prediksi
 
-# TAMPILKAN HASIL TERAKHIR UNTUK BOKS AKTIF
-if box_state["sudah_dianalisis"]:
-    status_prediksi = box_state["last_status"]
-    sisa_jam = box_state["last_sisa_jam"]
-    max_jam = box_state["last_max_jam"]
+# --- TAMPILAN HASIL PREDIKSI REAL-TIME ---
+col_r1, col_r2 = st.columns([2, 1])
 
-    col_r1, col_r2 = st.columns([2, 1])
+with col_r1:
+    if status_prediksi == "Aman":
+        st.success(f"### STATUS: {status_prediksi.upper()}")
+        st.write("🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi.")
+    elif status_prediksi == "Segera konsumsi":
+        st.warning(f"### STATUS: {status_prediksi.upper()}")
+        st.write(
+            "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
+        )
+    else:
+        st.error(f"### STATUS: {status_prediksi.upper()}")
+        st.write(
+            "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
+        )
 
-    with col_r1:
-        if status_prediksi == "Aman":
-            st.success(f"### STATUS: {status_prediksi.upper()}")
-            st.write("🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi.")
-        elif status_prediksi == "Segera konsumsi":
-            st.warning(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
-            )
-        else:
-            st.error(f"### STATUS: {status_prediksi.upper()}")
-            st.write(
-                "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
-            )
-
-    with col_r2:
-        if status_prediksi == "Tidak disarankan":
-            st.metric(
-                label="Estimasi Sisa Shelf Life",
-                value="0 Jam",
-                delta="Kedaluwarsa",
-                delta_color="inverse",
-            )
-        else:
-            st.metric(
-                label="Estimasi Sisa Shelf Life",
-                value=f"{sisa_jam} Jam",
-                delta=f"Maks: {max_jam} Jam",
-            )
-
-    persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
+with col_r2:
     if status_prediksi == "Tidak disarankan":
-        persentase_sisa = 0.0
+        st.metric(
+            label="Estimasi Sisa Shelf Life",
+            value="0 Jam",
+            delta="Kedaluwarsa",
+            delta_color="inverse",
+        )
+    else:
+        st.metric(
+            label="Estimasi Sisa Shelf Life",
+            value=f"{sisa_jam} Jam",
+            delta=f"Maks: {max_jam} Jam",
+        )
 
-    st.write(
-        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
-    )
-    st.progress(persentase_sisa)
-else:
-    st.info(
-        f"💡 Isikan form makanan di atas lalu klik tombol **'Hitung Prediksi Shelf Life'** untuk menganalisis sisa waktu simpan **{selected_box.upper()}**."
-    )
+persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
+if status_prediksi == "Tidak disarankan":
+    persentase_sisa = 0.0
+
+st.write(
+    f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
+)
+st.progress(persentase_sisa)
 
 # LOOP AUTO RERUN
 if auto_refresh:
