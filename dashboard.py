@@ -79,7 +79,7 @@ def get_user_box_ids(user_id, auth_token):
     url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes.json?auth={auth_token}"
     try:
         res = requests.get(url, timeout=3)
-        if res.status_code == 200 and res.json():
+        if res.status_code == 200 and res.json() is not None:
             boxes = res.json()
             if isinstance(boxes, dict):
                 return list(boxes.keys())
@@ -87,7 +87,7 @@ def get_user_box_ids(user_id, auth_token):
                 return [b for b in boxes if b]
     except Exception:
         pass
-    return ["box_01"]
+    return []  # Kembalikan list kosong jika user tidak punya boks sama sekali
 
 
 def add_user_box_id(user_id, new_box_id, auth_token):
@@ -265,8 +265,12 @@ pilihan_boks = get_user_box_ids(user_id, auth_token)
 
 if "page" not in st.session_state:
     st.session_state.page = "home"
-if "target_box" not in st.session_state or st.session_state.target_box not in pilihan_boks:
-    st.session_state.target_box = pilihan_boks[0] if pilihan_boks else "box_01"
+
+if pilihan_boks:
+    if "target_box" not in st.session_state or st.session_state.target_box not in pilihan_boks:
+        st.session_state.target_box = pilihan_boks[0]
+else:
+    st.session_state.target_box = None
 
 st.markdown("""
 <style>
@@ -317,68 +321,71 @@ if st.session_state.page == "home":
     st.caption("Overview perangkat • sensor real-time • prediksi kualitas makanan berbasis AI")
     st.divider()
 
-    statuses = []
-    for b_id in pilihan_boks:
-        b_data = all_boxes_data.get(b_id, {}) or {}
-        b_cfg = b_data.get("config", {}) or {}
-        gas = float(b_data.get("kadar_gas_ppm", 0) or 0)
-        temp = float(b_data.get("suhu_c", 0) or 0)
-        if gas == 0 and temp == 0:
-            status = "Offline"
-        elif not b_cfg.get("is_saved", False):
-            status = "Kosong"
-        else:
-            status = b_cfg.get("last_status", "Aman")
-        statuses.append(status)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Total SmartBox", len(pilihan_boks))
-    c2.metric("Perangkat Online", sum(1 for s in statuses if s != "Offline"))
-    c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
-    st.markdown("## Pilih SmartBox")
-
-    cols = st.columns(min(len(pilihan_boks), 3), gap="large")
-    for i, b_id in enumerate(pilihan_boks):
-        b_data = all_boxes_data.get(b_id, {}) or {}
-        b_cfg = b_data.get("config", {}) or {}
-        temp = float(b_data.get("suhu_c", 0) or 0)
-        rh = float(b_data.get("kelembapan_rh", 0) or 0)
-        gas = float(b_data.get("kadar_gas_ppm", 0) or 0)
-        slope = float(b_data.get("slope_gas", 0) or 0)
-
-        if gas == 0 and temp == 0:
-            status, color, dot = "Offline", "#89939b", "⚪"
-        elif not b_cfg.get("is_saved", False):
-            status, color, dot = "Kosong / Siap Digunakan", "#3286c8", "🔵"
-        else:
-            ai_status = b_cfg.get("last_status", "Aman")
-            if ai_status == "Aman":
-                status, color, dot = "Aman", "#1c9a6c", "🟢"
-            elif ai_status == "Segera konsumsi":
-                status, color, dot = "Segera Konsumsi", "#d99a19", "🟡"
+    if not pilihan_boks:
+        st.info("💡 **Belum ada SmartBox terdaftar.** Silakan tambahkan ID SmartBox pada menu di sidebar sebelah kiri.")
+    else:
+        statuses = []
+        for b_id in pilihan_boks:
+            b_data = all_boxes_data.get(b_id, {}) or {}
+            b_cfg = b_data.get("config", {}) or {}
+            gas = float(b_data.get("kadar_gas_ppm", 0) or 0)
+            temp = float(b_data.get("suhu_c", 0) or 0)
+            if gas == 0 and temp == 0:
+                status = "Offline"
+            elif not b_cfg.get("is_saved", False):
+                status = "Kosong"
             else:
-                status, color, dot = "Basi / Rawan", "#d64a4a", "🔴"
+                status = b_cfg.get("last_status", "Aman")
+            statuses.append(status)
 
-        with cols[i % 3]:
-            st.markdown(f"""
-            <div class="box-summary">
-              <div class="box-subtitle">IFO OX • MULTI-DEVICE</div>
-              <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id}</h3>
-              <div class="box-status" style="color:{color};">{dot} {status}</div>
-              <div class="box-subtitle">🌡️ Suhu <b>{temp:.1f} °C</b> &nbsp; · &nbsp; 💧 RH <b>{rh:.1f}%</b></div>
-              <div class="box-subtitle" style="margin-top:7px;">🧪 Gas <b>{gas:.0f} PPM</b> &nbsp; · &nbsp; Slope <b>{slope:.2f}</b></div>
-            </div>
-            """, unsafe_allow_html=True)
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total SmartBox", len(pilihan_boks))
+        c2.metric("Perangkat Online", sum(1 for s in statuses if s != "Offline"))
+        c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
+        st.markdown("## Pilih SmartBox")
 
-            sisa = b_cfg.get("last_sisa_jam", 0)
-            maksimum = b_cfg.get("last_max_jam", 24)
-            try:
-                progress = max(0.0, min(1.0, float(sisa) / max(1.0, float(maksimum)))) if b_cfg.get("is_saved", False) else 0.0
-            except (ValueError, TypeError, ZeroDivisionError):
-                progress = 0.0
-            st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
-            st.progress(progress)
-            st.button(f"Buka SmartBox #{b_id} →", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
+        cols = st.columns(min(len(pilihan_boks), 3), gap="large")
+        for i, b_id in enumerate(pilihan_boks):
+            b_data = all_boxes_data.get(b_id, {}) or {}
+            b_cfg = b_data.get("config", {}) or {}
+            temp = float(b_data.get("suhu_c", 0) or 0)
+            rh = float(b_data.get("kelembapan_rh", 0) or 0)
+            gas = float(b_data.get("kadar_gas_ppm", 0) or 0)
+            slope = float(b_data.get("slope_gas", 0) or 0)
+
+            if gas == 0 and temp == 0:
+                status, color, dot = "Offline", "#89939b", "⚪"
+            elif not b_cfg.get("is_saved", False):
+                status, color, dot = "Kosong / Siap Digunakan", "#3286c8", "🔵"
+            else:
+                ai_status = b_cfg.get("last_status", "Aman")
+                if ai_status == "Aman":
+                    status, color, dot = "Aman", "#1c9a6c", "🟢"
+                elif ai_status == "Segera konsumsi":
+                    status, color, dot = "Segera Konsumsi", "#d99a19", "🟡"
+                else:
+                    status, color, dot = "Basi / Rawan", "#d64a4a", "🔴"
+
+            with cols[i % 3]:
+                st.markdown(f"""
+                <div class="box-summary">
+                  <div class="box-subtitle">IFO OX • MULTI-DEVICE</div>
+                  <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id}</h3>
+                  <div class="box-status" style="color:{color};">{dot} {status}</div>
+                  <div class="box-subtitle">🌡️ Suhu <b>{temp:.1f} °C</b> &nbsp; · &nbsp; 💧 RH <b>{rh:.1f}%</b></div>
+                  <div class="box-subtitle" style="margin-top:7px;">🧪 Gas <b>{gas:.0f} PPM</b> &nbsp; · &nbsp; Slope <b>{slope:.2f}</b></div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                sisa = b_cfg.get("last_sisa_jam", 0)
+                maksimum = b_cfg.get("last_max_jam", 24)
+                try:
+                    progress = max(0.0, min(1.0, float(sisa) / max(1.0, float(maksimum)))) if b_cfg.get("is_saved", False) else 0.0
+                except (ValueError, TypeError, ZeroDivisionError):
+                    progress = 0.0
+                st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
+                st.progress(progress)
+                st.button(f"Buka SmartBox #{b_id} →", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
 
     st.divider()
     st.caption("iFOOX SmartBox • AI & IoT Food Quality Monitoring")
@@ -394,8 +401,9 @@ st.sidebar.write(f"Logged in as: **{user_email}**")
 if st.sidebar.button("🚪 Logout / Keluar", use_container_width=True):
     st.session_state.authenticated = False
     st.session_state.user_info = None
-    cookie_manager.delete("ifoox_refresh_token")
-    cookie_manager.delete("ifoox_user_email")
+    # Memberikan key unik saat delete agar tidak bentrok dengan elemen CookieManager lain[cite: 10]
+    cookie_manager.delete("ifoox_refresh_token", key="del_cookie_token")
+    cookie_manager.delete("ifoox_user_email", key="del_cookie_email")
     st.rerun()
 
 st.sidebar.divider()
@@ -408,6 +416,7 @@ if st.sidebar.button("Simpan Boks Baru", use_container_width=True):
     if clean_box_id:
         add_user_box_id(user_id, clean_box_id, auth_token)
         st.sidebar.success(f"Berhasil menambahkan {clean_box_id}!")
+        st.session_state.target_box = clean_box_id
         st.rerun()
 
 st.sidebar.divider()
@@ -419,9 +428,8 @@ if pilihan_boks:
     if st.sidebar.button("Hapus Boks Ini", use_container_width=True):
         delete_user_box_id(user_id, box_to_delete, auth_token)
         st.sidebar.success(f"Boks {box_to_delete} berhasil dihapus!")
-        if st.session_state.target_box == box_to_delete:
-            sisa_box = [b for b in pilihan_boks if b != box_to_delete]
-            st.session_state.target_box = sisa_box[0] if sisa_box else "box_01"
+        sisa_box = [b for b in pilihan_boks if b != box_to_delete]
+        st.session_state.target_box = sisa_box[0] if sisa_box else None
         st.rerun()
 
 st.sidebar.divider()
@@ -431,67 +439,70 @@ if st.sidebar.button("← Kembali ke Homepage", use_container_width=True):
     st.session_state.page = "home"
     st.rerun()
 
-default_index = pilihan_boks.index(st.session_state.target_box) if st.session_state.target_box in pilihan_boks else 0
-radio_selected = st.sidebar.radio(
-    "Pilih SmartBox Target:",
-    pilihan_boks,
-    index=default_index,
-    format_func=lambda x: f"📦 iFOOX SmartBox #{x}",
-)
+if pilihan_boks:
+    default_index = pilihan_boks.index(st.session_state.target_box) if st.session_state.target_box in pilihan_boks else 0
+    radio_selected = st.sidebar.radio(
+        "Pilih SmartBox Target:",
+        pilihan_boks,
+        index=default_index,
+        format_func=lambda x: f"📦 iFOOX SmartBox #{x}",
+    )
 
-if radio_selected != st.session_state.target_box:
-    st.session_state.target_box = radio_selected
-    st.rerun()
+    if radio_selected != st.session_state.target_box:
+        st.session_state.target_box = radio_selected
+        st.rerun()
 
-selected_box = st.session_state.target_box
+    selected_box = st.session_state.target_box
+else:
+    selected_box = None
 
-# Baca data boks langsung dari Cloud Firebase Database
-full_box_data = read_box_data(user_id, selected_box, auth_token)
-box_config = full_box_data.get("config", {})
+if selected_box:
+    full_box_data = read_box_data(user_id, selected_box, auth_token)
+    box_config = full_box_data.get("config", {})
 
-# Ambil status dan konfigurasi tersimpan
-is_saved = box_config.get("is_saved", False)
-saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
-saved_massa = box_config.get("massa_gram", 150)
-saved_tgl_str = box_config.get(
-    "tgl_masuk", datetime.now(wib_tz).strftime("%Y-%m-%d")
-)
-saved_jam_str = box_config.get(
-    "jam_pilihan_str",
-    f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
-)
+    is_saved = box_config.get("is_saved", False)
+    saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
+    saved_massa = box_config.get("massa_gram", 150)
+    saved_tgl_str = box_config.get(
+        "tgl_masuk", datetime.now(wib_tz).strftime("%Y-%m-%d")
+    )
+    saved_jam_str = box_config.get(
+        "jam_pilihan_str",
+        f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
+    )
 
 st.sidebar.divider()
 
 # RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR
-st.sidebar.subheader("🌐 Status Ringkas All-Box")
-all_boxes_data = read_all_boxes(user_id, auth_token, pilihan_boks)
+if pilihan_boks:
+    st.sidebar.subheader("🌐 Status Ringkas All-Box")
+    all_boxes_data = read_all_boxes(user_id, auth_token, pilihan_boks)
 
-for b_id in pilihan_boks:
-    b_data = all_boxes_data.get(b_id, {})
-    b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
-    b_temp = float(b_data.get("suhu_c", 0.0))
-    b_cfg = b_data.get("config", {})
+    for b_id in pilihan_boks:
+        b_data = all_boxes_data.get(b_id, {})
+        b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
+        b_temp = float(b_data.get("suhu_c", 0.0))
+        b_cfg = b_data.get("config", {})
 
-    if b_gas == 0.0 and b_temp == 0.0:
-        status_ringkas = "⚪ Offline"
-    elif not b_cfg.get("is_saved", False):
-        status_ringkas = "🟦 Kosong / Unlocked"
-    else:
-        st_ai = b_cfg.get("last_status", "Aman")
-        if st_ai == "Aman":
-            status_ringkas = "🟢 Aman"
-        elif st_ai == "Segera konsumsi":
-            status_ringkas = "🟡 Segera Konsumsi"
+        if b_gas == 0.0 and b_temp == 0.0:
+            status_ringkas = "⚪ Offline"
+        elif not b_cfg.get("is_saved", False):
+            status_ringkas = "🟦 Kosong / Unlocked"
         else:
-            status_ringkas = "🔴 Basi / Rawan"
+            st_ai = b_cfg.get("last_status", "Aman")
+            if st_ai == "Aman":
+                status_ringkas = "🟢 Aman"
+            elif st_ai == "Segera konsumsi":
+                status_ringkas = "🟡 Segera Konsumsi"
+            else:
+                status_ringkas = "🔴 Basi / Rawan"
 
-    st.sidebar.metric(
-        label=f"SmartBox #{b_id} {'(Aktif)' if b_id == selected_box else ''}",
-        value=status_ringkas,
-        delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
-        delta_color="off",
-    )
+        st.sidebar.metric(
+            label=f"SmartBox #{b_id} {'(Aktif)' if b_id == selected_box else ''}",
+            value=status_ringkas,
+            delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
+            delta_color="off",
+        )
 
 st.sidebar.divider()
 
@@ -510,31 +521,40 @@ st.caption("Teknologi Penyimpanan Makanan Berbasis AI & IoT Multi-Device untuk R
 
 st.divider()
 
+if not selected_box:
+    st.warning("⚠️ Belum ada SmartBox terdaftar di akun Anda. Silakan tambahkan ID SmartBox pada form di Sidebar terlebih dahulu.")
+    st.stop()
+
 # --- 1. PEMANTAUAN SENSOR REAL-TIME ---
-st.subheader(
-    f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box}**"
-)
-col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+@st.fragment(run_every=f"{refresh_rate}s" if auto_refresh else None)
+def render_live_sensor():
+    current_data = read_box_data(user_id, selected_box, auth_token)
+    suhu_val = float(current_data.get("suhu_c", 0.0))
+    rh_val = float(current_data.get("kelembapan_rh", 0.0))
+    gas_val = float(current_data.get("kadar_gas_ppm", 0.0))
+    slope_val = float(current_data.get("slope_gas", 0.0))
 
-suhu_val = float(full_box_data.get("suhu_c", 0.0))
-rh_val = float(full_box_data.get("kelembapan_rh", 0.0))
-gas_val = float(full_box_data.get("kadar_gas_ppm", 0.0))
-slope_val = float(full_box_data.get("slope_gas", 0.0))
+    st.subheader(
+        f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box}**"
+    )
+    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
-col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
-col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
-col_s3.metric(label="Kadar Gas Pembusukan", value=f"{gas_val:.0f} PPM")
-col_s4.metric(
-    label="Laju Pembusukan (Slope)",
-    value=f"{slope_val:.2f} PPM/m",
-    delta="Stabil" if slope_val <= 1.0 else "Meningkat",
-    delta_color="off" if slope_val <= 1.0 else "inverse",
-)
+    col_s1.metric(label="Suhu Ruang Box", value=f"{suhu_val:.1f} °C")
+    col_s2.metric(label="Kelembapan Air", value=f"{rh_val:.1f} %RH")
+    col_s3.metric(label="Kadar Gas Pembusukan", value=f"{gas_val:.0f} PPM")
+    col_s4.metric(
+        label="Laju Pembusukan (Slope)",
+        value=f"{slope_val:.2f} PPM/m",
+        delta="Stabil" if slope_val <= 1.0 else "Meningkat",
+        delta_color="off" if slope_val <= 1.0 else "inverse",
+    )
 
-jam_sekarang_wib = datetime.now(wib_tz).strftime("%H:%M:%S")
-st.caption(
-    f"🔄 Terakhir diperbarui dari ESP32 [{selected_box}]: **{jam_sekarang_wib} WIB**"
-)
+    jam_sekarang_wib = datetime.now(wib_tz).strftime("%H:%M:%S")
+    st.caption(
+        f"🔄 Terakhir diperbarui dari ESP32 [{selected_box}]: **{jam_sekarang_wib} WIB**"
+    )
+
+render_live_sensor()
 
 st.divider()
 
@@ -654,6 +674,11 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
 
 # --- 3. PROSES KALKULASI AI REAL-TIME ---
 if is_saved:
+    suhu_val = float(full_box_data.get("suhu_c", 0.0))
+    rh_val = float(full_box_data.get("kelembapan_rh", 0.0))
+    gas_val = float(full_box_data.get("kadar_gas_ppm", 0.0))
+    slope_val = float(full_box_data.get("slope_gas", 0.0))
+
     payload_dict = {
         "suhu_c": suhu_val,
         "kelembapan_rh": rh_val,
@@ -733,7 +758,3 @@ else:
     st.warning(
         f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
     )
-
-if auto_refresh:
-    time.sleep(refresh_rate)
-    st.rerun()
