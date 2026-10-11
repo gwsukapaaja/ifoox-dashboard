@@ -34,12 +34,13 @@ except Exception:
 def init_box_state(box_id):
     if box_id not in st.session_state:
         st.session_state[box_id] = {
+            "is_saved": False,  # Status Kunci Form (Save & Lock)
             "jenis_makanan": "Nasi & Karbohidrat",
             "massa_gram": 150,
             "tgl_masuk": datetime.now(wib_tz).date(),
             "jam_pilihan_str": f"{datetime.now(wib_tz).hour:02d}:{(datetime.now(wib_tz).minute // 15) * 15:02d}",
-            "last_status": "Aman",
-            "last_sisa_jam": 24,
+            "last_status": "Belum Ada Makanan",
+            "last_sisa_jam": 0,
             "last_max_jam": 24,
         }
 
@@ -129,7 +130,7 @@ sensor_data = read_sensor_data(selected_box)
 
 st.sidebar.divider()
 
-# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR (OTOMATIS SINKRON)
+# RINGKASAN MULTI-DEVICE STATUS DI SIDEBAR
 st.sidebar.subheader("🌐 Status Ringkas All-Box")
 all_boxes_data = read_all_boxes()
 
@@ -137,11 +138,13 @@ for b_id in pilihan_boks:
     b_data = all_boxes_data.get(b_id, {})
     b_gas = float(b_data.get("kadar_gas_ppm", 0.0))
     b_temp = float(b_data.get("suhu_c", 0.0))
+    b_st = st.session_state[b_id]
 
     if b_gas == 0.0 and b_temp == 0.0:
         status_ringkas = "⚪ Offline"
+    elif not b_st["is_saved"]:
+        status_ringkas = "🟦 Kosong / Unlocked"
     else:
-        b_st = st.session_state[b_id]
         st_ai = b_st.get("last_status", "Aman")
         if st_ai == "Aman":
             status_ringkas = "🟢 Aman"
@@ -204,10 +207,12 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN ---
+# --- 2. INPUT DATA MAKANAN (SISTEM SAVE, LOCK & DELETE) ---
 st.subheader(
-    f"📝 Form Input & Analisis Auto-AI - **{selected_box.upper()}**"
+    f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
+
+is_locked = box_state["is_saved"]
 
 with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
     col_f1, col_f2 = st.columns(2)
@@ -232,6 +237,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             "Jenis Makanan",
             opsi_makanan,
             index=idx_makanan,
+            disabled=is_locked,  # Terkunci jika sudah disave
             key=f"jenis_{selected_box}",
         )
         massa_gram = st.number_input(
@@ -239,6 +245,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             min_value=10,
             max_value=2000,
             value=int(box_state["massa_gram"]),
+            disabled=is_locked,  # Terkunci jika sudah disave
             key=f"massa_{selected_box}",
         )
 
@@ -247,6 +254,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         tgl_masuk = st.date_input(
             "Tanggal Penyimpanan",
             value=box_state["tgl_masuk"],
+            disabled=is_locked,  # Terkunci jika sudah disave
             key=f"tgl_{selected_box}",
         )
 
@@ -264,103 +272,137 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
             "Jam Penyimpanan",
             list_jam,
             index=idx_default,
+            disabled=is_locked,  # Terkunci jika sudah disave
             key=f"jam_{selected_box}",
         )
 
-    # Simpan nilai input form ke state
-    box_state["jenis_makanan"] = jenis_makanan
-    box_state["massa_gram"] = massa_gram
-    box_state["tgl_masuk"] = tgl_masuk
-    box_state["jam_pilihan_str"] = jam_pilihan_str
+    # TOMBOL KONTROL SAVE/LOCK & DELETE/RESET
+    col_btn1, col_btn2 = st.columns([1, 1])
 
-    # Parsing jam pilihan ke datetime WIB
-    jam_h, jam_m = map(int, jam_pilihan_str.split(":"))
-    waktu_gabung_naive = datetime.combine(
-        tgl_masuk, datetime.min.time().replace(hour=jam_h, minute=jam_m)
-    )
-    waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
+    with col_btn1:
+        if not is_locked:
+            if st.button("💾 Simpan & Kunci Makanan", type="primary"):
+                box_state["jenis_makanan"] = jenis_makanan
+                box_state["massa_gram"] = massa_gram
+                box_state["tgl_masuk"] = tgl_masuk
+                box_state["jam_pilihan_str"] = jam_pilihan_str
+                box_state["is_saved"] = True
+                st.rerun()
+        else:
+            st.success("🔒 Form Terkunci (Makanan Sedang Dipantau AI)")
 
-    # Kalkulasi Durasi Simpan
-    selisih = now_wib - waktu_gabung_wib
-    waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
-    st.info(
-        f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
-    )
+    with col_btn2:
+        if is_locked:
+            if st.button("🗑️ Hapus / Kosongkan Boks"):
+                box_state["is_saved"] = False
+                box_state["last_status"] = "Belum Ada Makanan"
+                box_state["last_sisa_jam"] = 0
+                box_state["last_max_jam"] = 24
+                st.rerun()
 
-# --- 3. KALKULASI OTOMATIS REAL-TIME AI (TANPA TOMBOL) ---
-payload_dict = {
-    "suhu_c": suhu_val,
-    "kelembapan_rh": rh_val,
-    "massa_gram": massa_gram,
-    "kadar_gas_ppm": gas_val,
-    "waktu_simpan_jam": waktu_simpan_jam,
-}
-
-for item in opsi_makanan:
-    col_name = f"jenis_makanan_{item}"
-    payload_dict[col_name] = 1 if jenis_makanan == item else 0
-
-df_input = pd.DataFrame([payload_dict])
-
-if hasattr(model, "feature_names_in_"):
-    df_input = df_input[model.feature_names_in_]
-
-status_prediksi = model.predict(df_input)[0]
-
-sisa_jam, max_jam = hitung_shelf_life(
-    jenis_makanan, waktu_simpan_jam, suhu_val, gas_val, slope_val
-)
-
-# LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS (Anti-Naik)
-last_sisa = box_state.get("last_sisa_jam", sisa_jam)
-if sisa_jam > last_sisa:
-    sisa_jam = last_sisa
-
-box_state["last_sisa_jam"] = sisa_jam
-box_state["last_max_jam"] = max_jam
-box_state["last_status"] = status_prediksi
-
-# --- TAMPILAN HASIL PREDIKSI REAL-TIME ---
-col_r1, col_r2 = st.columns([2, 1])
-
-with col_r1:
-    if status_prediksi == "Aman":
-        st.success(f"### STATUS: {status_prediksi.upper()}")
-        st.write("🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi.")
-    elif status_prediksi == "Segera konsumsi":
-        st.warning(f"### STATUS: {status_prediksi.upper()}")
-        st.write(
-            "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
+    # Hitung waktu simpan jika boks terkunci
+    if is_locked:
+        jam_h, jam_m = map(int, box_state["jam_pilihan_str"].split(":"))
+        waktu_gabung_naive = datetime.combine(
+            box_state["tgl_masuk"],
+            datetime.min.time().replace(hour=jam_h, minute=jam_m),
         )
-    else:
-        st.error(f"### STATUS: {status_prediksi.upper()}")
-        st.write(
-            "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
+        waktu_gabung_wib = wib_tz.localize(waktu_gabung_naive)
+
+        selisih = now_wib - waktu_gabung_wib
+        waktu_simpan_jam = max(0, int(selisih.total_seconds() // 3600))
+        st.info(
+            f"⏳ Durasi Terdeteksi Disimpan: **{waktu_simpan_jam} Jam** (Waktu WIB)"
         )
 
-with col_r2:
+
+# --- 3. PROSES KALKULASI AI REAL-TIME (HANYA JIKA BOKS TERKUNCI/DISIMPAN) ---
+if box_state["is_saved"]:
+    payload_dict = {
+        "suhu_c": suhu_val,
+        "kelembapan_rh": rh_val,
+        "massa_gram": box_state["massa_gram"],
+        "kadar_gas_ppm": gas_val,
+        "waktu_simpan_jam": waktu_simpan_jam,
+    }
+
+    for item in opsi_makanan:
+        col_name = f"jenis_makanan_{item}"
+        payload_dict[col_name] = (
+            1 if box_state["jenis_makanan"] == item else 0
+        )
+
+    df_input = pd.DataFrame([payload_dict])
+
+    if hasattr(model, "feature_names_in_"):
+        df_input = df_input[model.feature_names_in_]
+
+    status_prediksi = model.predict(df_input)[0]
+
+    sisa_jam, max_jam = hitung_shelf_life(
+        box_state["jenis_makanan"],
+        waktu_simpan_jam,
+        suhu_val,
+        gas_val,
+        slope_val,
+    )
+
+    # LOGIKA PENGUNCI MONOTONIK MUTLAK PER BOKS
+    last_sisa = box_state.get("last_sisa_jam", sisa_jam)
+    if last_sisa > 0 and sisa_jam > last_sisa:
+        sisa_jam = last_sisa
+
+    box_state["last_sisa_jam"] = sisa_jam
+    box_state["last_max_jam"] = max_jam
+    box_state["last_status"] = status_prediksi
+
+    # --- TAMPILAN HASIL PREDIKSI REAL-TIME ---
+    col_r1, col_r2 = st.columns([2, 1])
+
+    with col_r1:
+        if status_prediksi == "Aman":
+            st.success(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "🟢 Makanan masih segar, bagus, dan sangat aman dikonsumsi."
+            )
+        elif status_prediksi == "Segera konsumsi":
+            st.warning(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "⚠️ Kualitas makanan mulai menurun. Sangat disarankan untuk segera dihabiskan!"
+            )
+        else:
+            st.error(f"### STATUS: {status_prediksi.upper()}")
+            st.write(
+                "🚨 Makanan terdeteksi BASI / membusuk! Tidak disarankan untuk dikonsumsi."
+            )
+
+    with col_r2:
+        if status_prediksi == "Tidak disarankan":
+            st.metric(
+                label="Estimasi Sisa Shelf Life",
+                value="0 Jam",
+                delta="Kedaluwarsa",
+                delta_color="inverse",
+            )
+        else:
+            st.metric(
+                label="Estimasi Sisa Shelf Life",
+                value=f"{sisa_jam} Jam",
+                delta=f"Maks: {max_jam} Jam",
+            )
+
+    persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
     if status_prediksi == "Tidak disarankan":
-        st.metric(
-            label="Estimasi Sisa Shelf Life",
-            value="0 Jam",
-            delta="Kedaluwarsa",
-            delta_color="inverse",
-        )
-    else:
-        st.metric(
-            label="Estimasi Sisa Shelf Life",
-            value=f"{sisa_jam} Jam",
-            delta=f"Maks: {max_jam} Jam",
-        )
+        persentase_sisa = 0.0
 
-persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam))
-if status_prediksi == "Tidak disarankan":
-    persentase_sisa = 0.0
-
-st.write(
-    f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
-)
-st.progress(persentase_sisa)
+    st.write(
+        f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**"
+    )
+    st.progress(persentase_sisa)
+else:
+    st.warning(
+        f"⚠️ **{selected_box.upper()} belum diisi/disimpan!** Silakan pilih jenis makanan pada form di atas lalu klik **'Simpan & Kunci Makanan'** untuk mengaktifkan pemantauan AI."
+    )
 
 # LOOP AUTO RERUN
 if auto_refresh:
