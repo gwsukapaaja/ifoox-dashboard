@@ -21,7 +21,6 @@ wib_tz = pytz.timezone("Asia/Jakarta")
 
 # FIREBASE CONFIG
 FIREBASE_BASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebasedatabase.app"
-# Dapatkan Web API Key dari Firebase Console -> Project Settings -> General -> Web API Key
 FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", "AIzaSyB30K84Ka0ZsfDR06PcBzbJfmEbl8ZQunw")
 
 # Inisialisasi Pengurus Cookie Browser (Fitur Remember Me)
@@ -40,7 +39,7 @@ def login_user(email, password):
     payload = {"email": email, "password": password, "returnSecureToken": True}
     res = requests.post(url, json=payload)
     if res.status_code == 200:
-        return res.json()  # Mengembalikan idToken, localId (uid), email, refreshToken, dll.
+        return res.json()
     else:
         return None
 
@@ -65,7 +64,33 @@ def refresh_token_request(refresh_token):
     return None
 
 
-# --- FUNGSI BACA BOKS DARI FIREBASE (PER USER & SENSOR PUBLIK) ---
+# --- MANAGEMENT BOKS DINAMIS PER USER ---
+def get_user_box_ids(user_id, auth_token):
+    """Mendapatkan daftar ID boks yang dimiliki user dari Firebase."""
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes.json?auth={auth_token}"
+    try:
+        res = requests.get(url, timeout=3)
+        if res.status_code == 200 and res.json():
+            boxes = res.json()
+            if isinstance(boxes, dict):
+                return list(boxes.keys())
+            elif isinstance(boxes, list):
+                return [b for b in boxes if b]
+    except Exception:
+        pass
+    return ["box_01"]  # Default awal jika akun baru terdaftar
+
+
+def add_user_box_id(user_id, new_box_id, auth_token):
+    """Menambahkan ID boks baru ke daftar milik user di Firebase."""
+    url = f"{FIREBASE_BASE_URL}/users/{user_id}/my_boxes/{new_box_id}.json?auth={auth_token}"
+    try:
+        requests.put(url, json=True, timeout=3)
+    except Exception:
+        pass
+
+
+# --- FUNGSI BACA BOKS DARI FIREBASE ---
 def read_box_data(user_id, box_id, auth_token):
     data = {}
     # 1. Baca data sensor real-time publik langsung dari ESP32
@@ -152,7 +177,7 @@ if "authenticated" not in st.session_state:
 if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
-# Semak Cookie Browser untuk Auto-Login jika belum login di session
+# Semak Cookie Browser untuk Auto-Login
 saved_refresh_token = cookie_manager.get("ifoox_refresh_token")
 if not st.session_state.authenticated and saved_refresh_token:
     token_data = refresh_token_request(saved_refresh_token)
@@ -187,7 +212,6 @@ if not st.session_state.authenticated:
                         st.session_state.authenticated = True
                         st.session_state.user_info = auth_data
 
-                        # Simpan Refresh Token ke Cookie jika Remember Me dicentang
                         if remember_me and "refreshToken" in auth_data:
                             cookie_manager.set("ifoox_refresh_token", auth_data["refreshToken"], max_age=30*24*3600)
                             cookie_manager.set("ifoox_user_email", auth_data["email"], max_age=30*24*3600)
@@ -212,7 +236,7 @@ if not st.session_state.authenticated:
                 else:
                     st.warning("Mohon isi seluruh form pendaftaran.")
 
-    st.stop()  # Hentikan eksekusi kode dashboard jika belum login
+    st.stop()
 
 
 # ==========================================
@@ -222,12 +246,13 @@ user_id = st.session_state.user_info["localId"]
 auth_token = st.session_state.user_info["idToken"]
 user_email = st.session_state.user_info["email"]
 
-pilihan_boks = ["box_01", "box_02", "box_03"]
+# Dapatkan Boks Milik User dari Firebase (Dinamis)
+pilihan_boks = get_user_box_ids(user_id, auth_token)
 
 if "page" not in st.session_state:
     st.session_state.page = "home"
-if "target_box" not in st.session_state:
-    st.session_state.target_box = "box_01"
+if "target_box" not in st.session_state or st.session_state.target_box not in pilihan_boks:
+    st.session_state.target_box = pilihan_boks[0]
 
 st.markdown("""
 <style>
@@ -266,7 +291,6 @@ div[data-testid="stButton"] > button:hover {
 """, unsafe_allow_html=True)
 
 
-# Fungsi callback navigasi aman dari kartu boks ke detail boks
 def buka_detail_box(box_id_pilihan):
     st.session_state.target_box = box_id_pilihan
     st.session_state.page = "box"
@@ -299,7 +323,7 @@ if st.session_state.page == "home":
     c3.metric("Perlu Perhatian", sum(1 for s in statuses if s in ("Segera konsumsi", "Tidak disarankan", "Basi / Rawan")))
     st.markdown("## Pilih SmartBox")
 
-    cols = st.columns(3, gap="large")
+    cols = st.columns(min(len(pilihan_boks), 3), gap="large")
     for i, b_id in enumerate(pilihan_boks):
         b_data = all_boxes_data.get(b_id, {}) or {}
         b_cfg = b_data.get("config", {}) or {}
@@ -321,11 +345,11 @@ if st.session_state.page == "home":
             else:
                 status, color, dot = "Basi / Rawan", "#d64a4a", "🔴"
 
-        with cols[i]:
+        with cols[i % 3]:
             st.markdown(f"""
             <div class="box-summary">
               <div class="box-subtitle">IFO OX • MULTI-DEVICE</div>
-              <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id[-2:]}</h3>
+              <h3 style="margin:7px 0 2px;">📦 SmartBox #{b_id}</h3>
               <div class="box-status" style="color:{color};">{dot} {status}</div>
               <div class="box-subtitle">🌡️ Suhu <b>{temp:.1f} °C</b> &nbsp; · &nbsp; 💧 RH <b>{rh:.1f}%</b></div>
               <div class="box-subtitle" style="margin-top:7px;">🧪 Gas <b>{gas:.0f} PPM</b> &nbsp; · &nbsp; Slope <b>{slope:.2f}</b></div>
@@ -340,9 +364,7 @@ if st.session_state.page == "home":
                 progress = 0.0
             st.caption(f"Estimasi sisa shelf life: {sisa} jam" if b_cfg.get("is_saved", False) else "Belum ada makanan terdaftar")
             st.progress(progress)
-            
-            # Penggunaan on_click untuk mencegah StreamlitWidgetAlreadyInstantiatedError
-            st.button(f"Buka SmartBox #{b_id[-2:]} →", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
+            st.button(f"Buka SmartBox #{b_id} →", key=f"open_{b_id}", on_click=buka_detail_box, args=(b_id,), use_container_width=True)
 
     st.divider()
     st.caption("iFOOX SmartBox • AI & IoT Food Quality Monitoring")
@@ -358,10 +380,21 @@ st.sidebar.write(f"Logged in as: **{user_email}**")
 if st.sidebar.button("🚪 Logout / Keluar", use_container_width=True):
     st.session_state.authenticated = False
     st.session_state.user_info = None
-    # Hapus Cookie Browser saat Logout
     cookie_manager.delete("ifoox_refresh_token")
     cookie_manager.delete("ifoox_user_email")
     st.rerun()
+
+st.sidebar.divider()
+
+# --- FORM INPUT TAMBAH BOKS BARU DARI USER ---
+st.sidebar.header("➕ Tambah Perangkat Boks")
+new_box_input = st.sidebar.text_input("ID SmartBox Baru (misal: box_02)", key="input_new_box_id")
+if st.sidebar.button("Simpan Boks Baru", use_container_width=True):
+    clean_box_id = new_box_input.strip()
+    if clean_box_id:
+        add_user_box_id(user_id, clean_box_id, auth_token)
+        st.sidebar.success(f"Berhasil menambahkan {clean_box_id}!")
+        st.rerun()
 
 st.sidebar.divider()
 st.sidebar.header("⚙️ Kontrol Perangkat")
@@ -370,13 +403,12 @@ if st.sidebar.button("← Kembali ke Homepage", use_container_width=True):
     st.session_state.page = "home"
     st.rerun()
 
-# Menentukan index pilihan radio tanpa error key konflik
 default_index = pilihan_boks.index(st.session_state.target_box) if st.session_state.target_box in pilihan_boks else 0
 radio_selected = st.sidebar.radio(
     "Pilih SmartBox Target:",
     pilihan_boks,
     index=default_index,
-    format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
+    format_func=lambda x: f"📦 iFOOX SmartBox #{x}",
 )
 
 if radio_selected != st.session_state.target_box:
@@ -427,7 +459,7 @@ for b_id in pilihan_boks:
             status_ringkas = "🔴 Basi / Rawan"
 
     st.sidebar.metric(
-        label=f"SmartBox #{b_id.split('_')[1]} {'(Aktif)' if b_id == selected_box else ''}",
+        label=f"SmartBox #{b_id} {'(Aktif)' if b_id == selected_box else ''}",
         value=status_ringkas,
         delta=f"Gas: {b_gas:.0f} PPM | Suhu: {b_temp:.1f}°C",
         delta_color="off",
@@ -452,7 +484,7 @@ st.divider()
 
 # --- 1. PEMANTAUAN SENSOR REAL-TIME ---
 st.subheader(
-    f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box.split('_')[1]}**"
+    f"📡 Pemantauan Sensor Real-Time: **iFOOX SmartBox #{selected_box}**"
 )
 col_s1, col_s2, col_s3, col_s4 = st.columns(4)
 
@@ -667,7 +699,7 @@ if is_saved:
     if status_prediksi == "Tidak disarankan":
         persentase_sisa = 0.0
 
-    st.write(f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box.split('_')[1]}):**")
+    st.write(f"**Indikator Sisa Umur Simpan Makanan (Boks #{selected_box}):**")
     st.progress(persentase_sisa)
 else:
     st.warning(
