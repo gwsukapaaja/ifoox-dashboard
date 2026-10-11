@@ -30,7 +30,7 @@ except Exception:
     )
 
 
-# --- FUNGSI BACA BOKS LENGKAP DARI FIREBASE ---
+# --- FUNGSI BACA BOKS DARI FIREBASE ---
 def read_box_data(box_id):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}.json"
     try:
@@ -42,7 +42,7 @@ def read_box_data(box_id):
     return {}
 
 
-# --- FUNGSI SIMPAN CONFIG (STREAMLIT -> FIREBASE VIA PATCH) ---
+# --- FUNGSI SIMPAN CONFIG MENGGUNAKAN PATCH ---
 def save_box_config(box_id, config_dict):
     url = f"{FIREBASE_BASE_URL}/boxes/{box_id}/config.json"
     try:
@@ -63,8 +63,8 @@ def read_all_boxes():
     return {}
 
 
-# Fungsi Hitung Shelf Life
-def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
+# Fungsi Hitung Shelf Life (SINKRON DENGAN AI)
+def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     max_life_map = {
         "Nasi & Karbohidrat": 24,
         "Lauk Hewani": 36,
@@ -93,6 +93,13 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope):
     jam_terpakai_efektif = durasi_jam * faktor_gas * faktor_suhu * faktor_slope
     sisa_jam = max(0, int(max_hours - jam_terpakai_efektif))
 
+    # --- PENYESUAIAN SINKRONISASI AI ---
+    if status_ai == "Segera konsumsi":
+        # Jika AI terdeteksi Segera Konsumsi, batasi sisa jam maksimal 30% dari umur simpan
+        sisa_jam = min(sisa_jam, max(1, int(max_hours * 0.3)))
+    elif status_ai != "Aman":
+        sisa_jam = 0
+
     return sisa_jam, max_hours
 
 
@@ -109,11 +116,11 @@ selected_box = st.sidebar.radio(
     format_func=lambda x: f"📦 iFOOX SmartBox #{x.split('_')[1]}",
 )
 
-# BACA BOKS LANGSUNG DARI CLOUD FIREBASE
+# Baca data boks langsung dari Cloud Firebase Database
 full_box_data = read_box_data(selected_box)
 box_config = full_box_data.get("config", {})
 
-# Ambil status terkunci & input tersimpan langsung dari Firebase
+# Ambil status dan konfigurasi tersimpan
 is_saved = box_config.get("is_saved", False)
 saved_jenis = box_config.get("jenis_makanan", "Nasi & Karbohidrat")
 saved_massa = box_config.get("massa_gram", 150)
@@ -204,7 +211,7 @@ st.caption(
 
 st.divider()
 
-# --- 2. INPUT DATA MAKANAN (SISTEM SAVE, LOCK & DELETE 2-WAY PERSISTENCE) ---
+# --- 2. INPUT DATA MAKANAN (SISTEM PERSISTENCE CLOUD) ---
 st.subheader(
     f"📝 Form Input Makanan & Status Kunci - **{selected_box.upper()}**"
 )
@@ -287,7 +294,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
                 save_box_config(selected_box, new_cfg)
                 st.rerun()
         else:
-            st.success("🔒 Form Terkunci & Tersimpan Permanen di Cloud Firebase")
+            st.success("🔒 Form Terkunci di Firebase Database")
 
     with col_btn2:
         if is_saved:
@@ -341,8 +348,14 @@ if is_saved:
 
     status_prediksi = model.predict(df_input)[0]
 
+    # PASSING status_prediksi KE HITUNG SHELF LIFE
     sisa_jam, max_jam = hitung_shelf_life(
-        saved_jenis, waktu_simpan_jam, suhu_val, gas_val, slope_val
+        saved_jenis,
+        waktu_simpan_jam,
+        suhu_val,
+        gas_val,
+        slope_val,
+        status_ai=status_prediksi,
     )
 
     # Logika Monotonik mutlak (sisa jam tidak naik)
@@ -350,7 +363,7 @@ if is_saved:
     if last_sisa > 0 and sisa_jam > last_sisa:
         sisa_jam = last_sisa
 
-    # Simpan pembaruan status ke Firebase secara persisten
+    # Simpan pembaruan status ke Firebase
     if (
         box_config.get("last_status") != status_prediksi
         or box_config.get("last_sisa_jam") != sisa_jam
