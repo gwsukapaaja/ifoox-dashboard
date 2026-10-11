@@ -135,7 +135,8 @@ refresh_rate = st.sidebar.slider(
 # ==========================================
 # 🏠 HALAMAN 1: HOMEPAGE (INTERACTIVE CARDS)
 # ==========================================
-if "Homepage" in selected_page:
+# FIX PENGECEKAN PERSIS
+if selected_page == pilihan_navigasi[0]:
     st.title("🍱 iFOOX SMARTBOX - OVERVIEW DASHBOARD")
     st.caption("Pilih dan pantau seluruh perangkat SmartBox secara terintegrasi dalam satu layar.")
     st.divider()
@@ -242,7 +243,6 @@ if "Homepage" in selected_page:
             )
 
             target_box_name = f"📦 SmartBox #{b_id.split('_')[1]}"
-            # Panggil callback function via on_click & args
             st.button(
                 f"🔎 Buka BOX_{b_id.split('_')[1]}",
                 key=f"btn_homepage_{b_id}",
@@ -257,7 +257,9 @@ if "Homepage" in selected_page:
 # 📦 HALAMAN 2: DETAIL BOKS (MONITORING & FORM)
 # ==========================================
 else:
-    selected_box = f"box_{selected_page.split('#')[1]}"
+    # Parsing ID Boks yang dipilih
+    box_num = selected_page.split('#')[1].strip()
+    selected_box = f"box_{box_num}"
 
     # Baca data boks aktif langsung dari Firebase
     full_box_data = read_box_data(selected_box)
