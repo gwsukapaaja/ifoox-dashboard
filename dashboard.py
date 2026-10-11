@@ -95,7 +95,7 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
 
     # --- PENYESUAIAN SINKRONISASI AI ---
     if status_ai == "Segera konsumsi":
-        # Jika AI terdeteksi Segera Konsumsi, batasi sisa jam maksimal 30% dari umur simpan
+        # Batasi sisa jam maksimal 30% dari umur simpan
         sisa_jam = min(sisa_jam, max(1, int(max_hours * 0.3)))
     elif status_ai != "Aman":
         sisa_jam = 0
@@ -327,7 +327,7 @@ with st.expander("📌 Masukkan Data Makanan dalam Boks", expanded=True):
         )
 
 
-# --- 3. PROSES KALKULASI AI REAL-TIME ---
+# --- 3. PROSES KALKULASI AI REAL-TIME + VIGNETTE DYNAMIC ---
 if is_saved:
     payload_dict = {
         "suhu_c": suhu_val,
@@ -372,6 +372,37 @@ if is_saved:
         box_config["last_sisa_jam"] = sisa_jam
         box_config["last_max_jam"] = max_jam
         save_box_config(selected_box, box_config)
+
+    # --- INJEKSI CSS EFEK VIGNETTE DYNAMIC DARI STATUS AI ---
+    if status_prediksi == "Segera konsumsi":
+        st.markdown(
+            """
+            <style>
+            .stApp {
+                box-shadow: inset 0 0 90px rgba(255, 193, 7, 0.5) !important;
+                transition: box-shadow 0.5s ease-in-out;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+    elif status_prediksi != "Aman":
+        st.markdown(
+            """
+            <style>
+            @keyframes pulse-danger {
+                0% { box-shadow: inset 0 0 60px rgba(220, 53, 69, 0.45); }
+                50% { box-shadow: inset 0 0 130px rgba(220, 53, 69, 0.85); }
+                100% { box-shadow: inset 0 0 60px rgba(220, 53, 69, 0.45); }
+            }
+            .stApp {
+                animation: pulse-danger 1.5s infinite !important;
+                transition: box-shadow 0.5s ease-in-out;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
     # --- TAMPILAN HASIL PREDIKSI ---
     col_r1, col_r2 = st.columns([2, 1])
