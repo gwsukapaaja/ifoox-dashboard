@@ -172,8 +172,8 @@ if "authenticated" not in st.session_state:
 if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
-# Ambil cookie dari browser jika belum terautentikasi
-if not st.session_state.authenticated:
+# Cek cookie hanya jika user belum login dan tidak sedang dalam alur logout
+if not st.session_state.authenticated and not st.session_state.get("logging_out", False):
     all_cookies = cookie_manager.get_all()
     saved_refresh_token = all_cookies.get("ifoox_refresh_token")
     saved_email = all_cookies.get("ifoox_user_email")
@@ -190,6 +190,10 @@ if not st.session_state.authenticated:
                 "idToken": token_data["id_token"],
                 "email": email_found,
             }
+
+# Reset flag logout setelah masuk ke tampilan login
+if st.session_state.get("logging_out", False):
+    st.session_state.logging_out = False
 
 if not st.session_state.authenticated:
     st.markdown("<h1 style='text-align: center;'>🍱 iFOOX Smartbox</h1>", unsafe_allow_html=True)
@@ -390,10 +394,11 @@ if st.session_state.page == "home":
 st.sidebar.markdown(f"👤 **{user_email}**")
 
 if st.sidebar.button("🚪 Keluar", use_container_width=True):
+    # Set flag agar auto-login tidak berjalan pada eksekusi ulang berikut
+    st.session_state.logging_out = True
     st.session_state.authenticated = False
     st.session_state.user_info = None
 
-    # Menggunakan try-except agar hapus cookie tidak memicu KeyError jika cookie sudah tidak ada[cite: 14]
     try:
         cookie_manager.delete("ifoox_refresh_token", key="del_cookie_token")
     except Exception:
@@ -518,7 +523,7 @@ with tab_monitor:
             if last_sisa > 0 and sisa_jam > last_sisa:
                 sisa_jam = last_sisa
 
-            # jika sisa jam matematika sudah habis (0 Jam), paksa status AI menjadi "Tidak disarankan"[cite: 13]
+            # Override status jika sisa jam sudah 0 jam
             if sisa_jam <= 0:
                 status_prediksi = "Tidak disarankan"
 
