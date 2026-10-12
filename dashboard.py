@@ -24,7 +24,7 @@ FIREBASE_BASE_URL = "https://ifoox-smartbox-default-rtdb.asia-southeast1.firebas
 FIREBASE_API_KEY = st.secrets.get("FIREBASE_API_KEY", "AIzaSyB30K84Ka0ZsfDR06PcBzbJfmEbl8ZQunw")
 
 # Inisialisasi Cookie Manager (Remember Me)
-cookie_manager = stx.CookieManager()
+cookie_manager = stx.CookieManager(key="ifoox_cookie_manager")
 
 # Load Model AI
 try:
@@ -148,7 +148,6 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     }
     max_hours = max_life_map.get(jenis, 24)
 
-    # Penyesuaian faktor lingkungan
     faktor_gas = 2.0 if gas > 500 else (1.4 if gas > 300 else 1.0)
     faktor_slope = 1.4 if slope > 3.0 else (1.2 if slope > 1.0 else 1.0)
     faktor_suhu = 1.4 if suhu > 30.0 else 1.0
@@ -156,7 +155,6 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     jam_terpakai_efektif = durasi_jam * faktor_gas * faktor_suhu * faktor_slope
     sisa_jam = max(0, int(max_hours - jam_terpakai_efektif))
 
-    # Jika AI mendeteksi Segera Konsumsi, sisa jam dibatasi maksimal 35% dari max_hours
     if status_ai == "Segera konsumsi":
         sisa_maks_peringatan = int(max_hours * 0.35)
         sisa_jam = min(sisa_jam, sisa_maks_peringatan)
@@ -174,19 +172,24 @@ if "authenticated" not in st.session_state:
 if "user_info" not in st.session_state:
     st.session_state.user_info = None
 
-saved_refresh_token = cookie_manager.get("ifoox_refresh_token")
-if not st.session_state.authenticated and saved_refresh_token:
-    token_data = refresh_token_request(saved_refresh_token)
-    if token_data and "id_token" in token_data:
-        user_detail = get_user_details(token_data["id_token"])
-        email_found = user_detail.get("email") if user_detail else (cookie_manager.get("ifoox_user_email") or "User")
+# Ambil cookie dari browser jika belum terautentikasi
+if not st.session_state.authenticated:
+    all_cookies = cookie_manager.get_all()
+    saved_refresh_token = all_cookies.get("ifoox_refresh_token")
+    saved_email = all_cookies.get("ifoox_user_email")
 
-        st.session_state.authenticated = True
-        st.session_state.user_info = {
-            "localId": token_data["user_id"],
-            "idToken": token_data["id_token"],
-            "email": email_found,
-        }
+    if saved_refresh_token:
+        token_data = refresh_token_request(saved_refresh_token)
+        if token_data and "id_token" in token_data:
+            user_detail = get_user_details(token_data["id_token"])
+            email_found = user_detail.get("email") if user_detail else (saved_email or "User")
+
+            st.session_state.authenticated = True
+            st.session_state.user_info = {
+                "localId": token_data.get("user_id") or token_data.get("user_id"),
+                "idToken": token_data["id_token"],
+                "email": email_found,
+            }
 
 if not st.session_state.authenticated:
     st.markdown("<h1 style='text-align: center;'>🍱 iFOOX Smartbox</h1>", unsafe_allow_html=True)
@@ -205,13 +208,15 @@ if not st.session_state.authenticated:
             if st.button("Masuk", type="primary", use_container_width=True):
                 if login_email and login_pass:
                     auth_data = login_user(login_email, login_pass)
-                    if auth_data:
+                    if auth_data and "idToken" in auth_data:
                         st.session_state.authenticated = True
                         st.session_state.user_info = auth_data
 
-                        if remember_me and "refreshToken" in auth_data:
-                            cookie_manager.set("ifoox_refresh_token", auth_data["refreshToken"], max_age=30*24*3600, key="set_cookie_token")
-                            cookie_manager.set("ifoox_user_email", auth_data["email"], max_age=30*24*3600, key="set_cookie_email")
+                        if remember_me:
+                            ref_token = auth_data.get("refreshToken") or auth_data.get("refresh_token")
+                            if ref_token:
+                                cookie_manager.set("ifoox_refresh_token", ref_token, max_age=30*24*3600, key="set_cookie_token")
+                                cookie_manager.set("ifoox_user_email", auth_data.get("email", ""), max_age=30*24*3600, key="set_cookie_email")
 
                         st.success("Berhasil masuk!")
                         st.rerun()
@@ -383,11 +388,22 @@ if st.session_state.page == "home":
 # ⚙️ SIDEBAR MANAGEMENT
 # ==========================================
 st.sidebar.markdown(f"👤 **{user_email}**")
+
 if st.sidebar.button("🚪 Keluar", use_container_width=True):
     st.session_state.authenticated = False
     st.session_state.user_info = None
-    cookie_manager.delete("ifoox_refresh_token", key="del_cookie_token")
-    cookie_manager.delete("ifoox_user_email", key="del_cookie_email")
+
+    # Menggunakan try-except agar hapus cookie tidak memicu KeyError jika cookie sudah tidak ada[cite: 14]
+    try:
+        cookie_manager.delete("ifoox_refresh_token", key="del_cookie_token")
+    except Exception:
+        pass
+
+    try:
+        cookie_manager.delete("ifoox_user_email", key="del_cookie_email")
+    except Exception:
+        pass
+
     st.rerun()
 
 st.sidebar.divider()
@@ -502,8 +518,7 @@ with tab_monitor:
             if last_sisa > 0 and sisa_jam > last_sisa:
                 sisa_jam = last_sisa
 
-            # --- OVERRIDE SINKRONISASI LOGIKA ---
-            # Jika sisa jam matematika sudah habis (0 Jam), paksa status AI menjadi "Tidak disarankan"
+            # jika sisa jam matematika sudah habis (0 Jam), paksa status AI menjadi "Tidak disarankan"[cite: 13]
             if sisa_jam <= 0:
                 status_prediksi = "Tidak disarankan"
 
