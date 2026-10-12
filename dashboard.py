@@ -148,14 +148,19 @@ def hitung_shelf_life(jenis, durasi_jam, suhu, gas, slope, status_ai="Aman"):
     }
     max_hours = max_life_map.get(jenis, 24)
 
-    faktor_gas = 1.8 if gas > 580 else (1.3 if gas > 360 else 1.0)
-    faktor_slope = 1.3 if slope > 3.0 else (1.1 if slope > 1.0 else 1.0)
-    faktor_suhu = 1.3 if suhu > 30.0 else 1.0
+    # Penyesuaian faktor lingkungan
+    faktor_gas = 2.0 if gas > 500 else (1.4 if gas > 300 else 1.0)
+    faktor_slope = 1.4 if slope > 3.0 else (1.2 if slope > 1.0 else 1.0)
+    faktor_suhu = 1.4 if suhu > 30.0 else 1.0
 
     jam_terpakai_efektif = durasi_jam * faktor_gas * faktor_suhu * faktor_slope
     sisa_jam = max(0, int(max_hours - jam_terpakai_efektif))
 
-    if status_ai == "Tidak disarankan":
+    # Jika AI mendeteksi Segera Konsumsi, sisa jam dibatasi maksimal 35% dari max_hours
+    if status_ai == "Segera konsumsi":
+        sisa_maks_peringatan = int(max_hours * 0.35)
+        sisa_jam = min(sisa_jam, sisa_maks_peringatan)
+    elif status_ai in ("Tidak disarankan", "Basi / Rawan"):
         sisa_jam = 0
 
     return sisa_jam, max_hours
@@ -492,6 +497,16 @@ with tab_monitor:
             status_prediksi = model.predict(df_input)[0]
             sisa_jam, max_jam = hitung_shelf_life(saved_jenis, waktu_simpan_jam, suhu_val, gas_val, slope_val, status_ai=status_prediksi)
 
+            # Monotonic Decreasing
+            last_sisa = box_config.get("last_sisa_jam", sisa_jam)
+            if last_sisa > 0 and sisa_jam > last_sisa:
+                sisa_jam = last_sisa
+
+            # --- OVERRIDE SINKRONISASI LOGIKA ---
+            # Jika sisa jam matematika sudah habis (0 Jam), paksa status AI menjadi "Tidak disarankan"
+            if sisa_jam <= 0:
+                status_prediksi = "Tidak disarankan"
+
             if box_config.get("last_status") != status_prediksi or box_config.get("last_sisa_jam") != sisa_jam:
                 box_config["last_status"] = status_prediksi
                 box_config["last_sisa_jam"] = sisa_jam
@@ -505,12 +520,12 @@ with tab_monitor:
                 elif status_prediksi == "Segera konsumsi":
                     st.warning(f"### STATUS: {status_prediksi.upper()}\n⚠️ Kualitas mulai menurun, segera dihabiskan!")
                 else:
-                    st.error(f"### STATUS: {status_prediksi.upper()}\n🚨 Makanan terdeteksi BASI! Jangan dikonsumsi.")
+                    st.error(f"### STATUS: TIDAK DISARANKAN / BASI\n🚨 Makanan terdeteksi BASI / Kadaluwarsa! Jangan dikonsumsi.")
 
             with col_r2:
                 st.metric("Estimasi Sisa Umur", f"{sisa_jam} Jam", delta=f"Max: {max_jam} Jam")
 
-            persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam)) if status_prediksi != "Tidak disarankan" else 0.0
+            persentase_sisa = max(0.0, min(1.0, sisa_jam / max_jam)) if status_prediksi not in ("Tidak disarankan", "Basi / Rawan") else 0.0
             st.progress(persentase_sisa)
         else:
             st.info("💡 **SmartBox ini masih kosong.** Buka tab **📝 Konfigurasi Makanan** untuk mengisi data makanan.")
